@@ -1,0 +1,50 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.g.dart
+*.freezed.dart
+
+# Android
+android/.gradle
+android/captures/
+android/gradlew
+android/gradlew.bat
+android/local.properties
+android/key.properties
+android/app/debug.keystore
+android/app/release.keystore
+android/GeneratedPluginRegistrant.java
+
+# iOS / macOS
+ios/Flutter/.last_build_id
+ios/Pods/
+ios/.symlinks/
+macos/Flutter/GeneratedPluginRegistrant.swift
+macos/Pods/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Coverage
+coverage/
+lcov.info
+
+# Secure / Sensitive
+android/app/google-services.json
+google-service-account.json
+*.p12
+*.keystore

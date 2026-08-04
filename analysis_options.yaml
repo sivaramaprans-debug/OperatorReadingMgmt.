@@ -1,0 +1,37 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    - avoid_print
+    - avoid_returning_null_for_future
+    - cancel_subscriptions
+    - close_sinks
+    - always_declare_return_types
+    - annotate_overrides
+    - avoid_dynamic_calls
+    - avoid_redundant_argument_values
+    - avoid_unnecessary_containers
+    - avoid_web_libraries_in_flutter
+    - curly_braces_in_flow_control_structures
+    - directives_ordering
+    - exhaustive_cases
+    - prefer_const_constructors
+    - prefer_const_constructors_in_immutables
+    - prefer_const_declarations
+    - prefer_final_fields
+    - prefer_if_null_operators
+    - prefer_null_aware_operators
+    - prefer_single_quotes
+    - require_trailing_commas
+    - sized_box_for_whitespace
+    - sort_child_properties_last
+    - use_colored_box
+    - use_enums
+
+analyzer:
+  exclude:
+    - '**/*.g.dart'
+    - '**/*.freezed.dart'
+  errors:
+    missing_required_param: error
+    missing_return: error

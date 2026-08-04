@@ -1,0 +1,11 @@
+# Assets directory placeholder
+# 
+# Place application assets in subdirectories:
+#   assets/images/   — app images and illustrations
+#   assets/fonts/    — bundled fonts (Inter family is loaded via google_fonts in dev;
+#                      bundle here for production/offline use in Step 9)
+#
+# The pubspec.yaml already declares:
+#   flutter:
+#     assets:
+#       - assets/images/
