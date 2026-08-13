@@ -2,6 +2,21 @@ import 'package:uuid/uuid.dart';
 import '../supabase_client.dart';
 import '../../core/utils/app_date_utils.dart';
 
+/// Device category constants.
+abstract final class DeviceCategory {
+  static const String energy = 'energy';
+  static const String dedusting = 'dedusting';
+  static const String water = 'water';
+
+  static String label(String category) {
+    switch (category) {
+      case dedusting: return '🌀 Dedusting';
+      case water:     return '💧 Water Meter';
+      default:        return '⚡ Energy';
+    }
+  }
+}
+
 /// Plain Dart model for a device.
 class SupabaseDevice {
   const SupabaseDevice({
@@ -15,6 +30,7 @@ class SupabaseDevice {
     required this.dayUnitFactors,
     required this.isActive,
     required this.createdAt,
+    this.deviceCategory = DeviceCategory.energy,
   });
 
   final String id;
@@ -27,6 +43,19 @@ class SupabaseDevice {
   final String dayUnitFactors;  // JSON string
   final bool isActive;
   final int createdAt;
+  /// 'energy' | 'dedusting' | 'water'
+  final String deviceCategory;
+
+  bool get isEnergy    => deviceCategory == DeviceCategory.energy;
+  bool get isDedusting => deviceCategory == DeviceCategory.dedusting;
+  bool get isWater     => deviceCategory == DeviceCategory.water;
+
+  /// The single metric unit for this device.
+  String get singleMetric {
+    if (isDedusting) return 'KWH';
+    if (isWater) return 'LTRS';
+    return '';
+  }
 
   factory SupabaseDevice.fromMap(Map<String, dynamic> m) => SupabaseDevice(
         id: m['id'] as String,
@@ -39,6 +68,7 @@ class SupabaseDevice {
         dayUnitFactors: m['day_unit_factors'] as String? ?? '{}',
         isActive: m['is_active'] as bool? ?? true,
         createdAt: m['created_at'] as int? ?? 0,
+        deviceCategory: m['device_category'] as String? ?? DeviceCategory.energy,
       );
 
   Map<String, dynamic> toMap() => {
@@ -52,6 +82,7 @@ class SupabaseDevice {
         'day_unit_factors': dayUnitFactors,
         'is_active': isActive,
         'created_at': createdAt,
+        'device_category': deviceCategory,
       };
 }
 
@@ -97,6 +128,7 @@ class SupabaseDevicesRepository {
     required bool requiresHeatDay,
     required String heatUnitFactors,
     required String dayUnitFactors,
+    String deviceCategory = DeviceCategory.energy,
   }) async {
     final id = _uuid.v4();
     final now = AppDateUtils.nowUtcMs();
@@ -111,8 +143,20 @@ class SupabaseDevicesRepository {
       'day_unit_factors': dayUnitFactors,
       'is_active': true,
       'created_at': now,
+      'device_category': deviceCategory,
     });
     return id;
+  }
+
+  /// Get all active devices of a given category.
+  Future<List<SupabaseDevice>> getByCategory(String category) async {
+    final data = await supabase
+        .from(_table)
+        .select()
+        .eq('device_category', category)
+        .eq('is_active', true)
+        .order('name');
+    return (data as List).map((m) => SupabaseDevice.fromMap(m as Map<String, dynamic>)).toList();
   }
 
   Future<void> update(String id, {

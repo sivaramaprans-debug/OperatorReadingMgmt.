@@ -21,6 +21,8 @@ abstract final class RoutePaths {
   static const String adminReadings = '/admin/readings';
   static const String adminReadingAdd = '/admin/readings/add';
   static const String adminReadingEdit = '/admin/readings/:id/edit';
+  static const String adminDeddustingReadings = '/admin/readings/dedusting';
+  static const String adminWaterReadings = '/admin/readings/water';
   static const String adminAuditLogs = '/admin/audit-logs';
 
   // Operator routes

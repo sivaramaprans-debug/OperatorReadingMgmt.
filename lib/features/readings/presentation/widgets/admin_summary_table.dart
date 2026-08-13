@@ -50,8 +50,12 @@ class AdminSummaryTable extends ConsumerWidget {
             );
           }
 
-          // Filter devices: for heat only include requiresHeatDay devices
+          // BUG FIX: Build qualified devices ONLY from device IDs that appear
+          // in the filtered reading rows — prevents empty columns when an
+          // operator filter is active.
+          final deviceIdsInRows = rows.map((r) => r.reading.deviceId).toSet();
           final qualifiedDevices = allDevices.where((d) {
+            if (!deviceIdsInRows.contains(d.id)) return false;
             if (readingType == 'heat' && !d.requiresHeatDay) return false;
             final matrixStr = readingType == 'heat' ? d.matrix : d.dayMatrix;
             return matrixStr.trim().isNotEmpty;

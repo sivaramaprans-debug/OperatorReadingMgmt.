@@ -35,6 +35,7 @@ class DeviceFormNotifier extends AutoDisposeNotifier<DeviceFormState> {
     required bool requiresHeatDay,
     Map<String, double> heatUnitFactors = const {},
     Map<String, double> dayUnitFactors = const {},
+    String deviceCategory = 'energy',
   }) async {
     state = state.copyWith(isLoading: true, error: null);
     final admin = ref.read(authNotifierProvider.notifier).currentUser;
@@ -53,6 +54,7 @@ class DeviceFormNotifier extends AutoDisposeNotifier<DeviceFormState> {
       requiresHeatDay: requiresHeatDay,
       heatUnitFactors: heatUnitFactors,
       dayUnitFactors: dayUnitFactors,
+      deviceCategory: deviceCategory,
     );
 
     if (failure != null) {

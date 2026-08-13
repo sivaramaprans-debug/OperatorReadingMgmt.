@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -24,6 +25,20 @@ class OperatorReadingsListScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('My Readings'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update_rounded),
+            tooltip: 'Check for Updates',
+            onPressed: () async {
+              final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
+              if (await canLaunchUrl(url)) {
+                await launchUrl(url, mode: LaunchMode.externalApplication);
+              } else if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Could not launch update page.')),
+                );
+              }
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout_rounded),
             onPressed: () => ref.read(authNotifierProvider.notifier).logout(),

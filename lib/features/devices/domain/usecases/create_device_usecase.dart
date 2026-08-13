@@ -15,6 +15,7 @@ class CreateDeviceUseCase {
     required bool requiresHeatDay,
     Map<String, double> heatUnitFactors = const {},
     Map<String, double> dayUnitFactors = const {},
+    String deviceCategory = DeviceCategory.energy,
   }) async {
     if (name.trim().isEmpty) return (null, const ValidationFailure('Device name is required.'));
 
@@ -32,6 +33,7 @@ class CreateDeviceUseCase {
         requiresHeatDay: requiresHeatDay,
         heatUnitFactors: heatFactorsJson,
         dayUnitFactors: dayFactorsJson,
+        deviceCategory: deviceCategory,
       );
       return (id, null);
     } catch (e) {

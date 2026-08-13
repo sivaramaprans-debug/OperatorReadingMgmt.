@@ -32,7 +32,10 @@ class AppUpdateService {
       }
 
       final latestVersion = settings['latest_app_version'] ?? '1.0.0';
-      final apkUrl = settings['apk_download_url'] ?? '';
+      final rawApkUrl = settings['apk_download_url'] ?? '';
+      final apkUrl = rawApkUrl.isNotEmpty
+          ? rawApkUrl
+          : 'https://github.com/sivaramaprans-debug/OperatorReadingMgmt/releases/latest';
       final releaseNotes = settings['app_release_notes'] ?? 'General performance improvements and bug fixes.';
 
       final hasUpdate = _isVersionHigher(latestVersion, currentVersion);

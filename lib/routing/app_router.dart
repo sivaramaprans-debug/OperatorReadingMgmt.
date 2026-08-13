@@ -23,6 +23,8 @@ import '../features/readings/presentation/screens/operator_reading_edit_screen.d
 import '../features/readings/presentation/screens/admin_readings_list_screen.dart';
 import '../features/readings/presentation/screens/admin_reading_edit_screen.dart';
 import '../features/audit/presentation/screens/admin_audit_logs_screen.dart';
+import '../features/readings/presentation/screens/dedusting_readings_screen.dart';
+import '../features/readings/presentation/screens/water_readings_screen.dart';
 import '../database/repositories/supabase_operators_repository.dart';
 import '../database/repositories/supabase_devices_repository.dart';
 import '../database/repositories/supabase_readings_repository.dart';
@@ -261,6 +263,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           context,
           state,
           const AdminAuditLogsScreen(),
+        ),
+      ),
+      GoRoute(
+        path: RoutePaths.adminDeddustingReadings,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const DeddustingReadingsScreen(),
+        ),
+      ),
+      GoRoute(
+        path: RoutePaths.adminWaterReadings,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const WaterReadingsScreen(),
         ),
       ),
 

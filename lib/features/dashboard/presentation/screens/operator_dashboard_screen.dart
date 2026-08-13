@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../routing/route_paths.dart';
 import '../../../../shared/widgets/loading_widget.dart';
+import '../../../../shared/widgets/app_update_banner.dart';
 import '../../../auth/presentation/notifiers/auth_notifier.dart';
 import '../notifiers/operator_dashboard_notifier.dart';
-
-import '../../../../shared/widgets/app_update_banner.dart';
 
 class OperatorDashboardScreen extends ConsumerWidget {
   const OperatorDashboardScreen({super.key});
@@ -22,6 +22,16 @@ class OperatorDashboardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Operator Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update_rounded),
+            tooltip: 'Check for Updates',
+            onPressed: () async {
+              final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
+              if (await canLaunchUrl(url)) {
+                await launchUrl(url, mode: LaunchMode.externalApplication);
+              }
+            },
+          ),
           IconButton(
             tooltip: 'Logout',
             icon: const Icon(Icons.logout_rounded),
@@ -38,6 +48,22 @@ class OperatorDashboardScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const AppUpdateBanner(),
+              Card(
+                color: AppColors.primaryContainer.withOpacity(0.4),
+                margin: const EdgeInsets.only(bottom: 16),
+                child: ListTile(
+                  leading: const Icon(Icons.system_update_rounded, color: AppColors.primary, size: 32),
+                  title: const Text('Check for App Updates', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Tap to open GitHub Releases and download latest APK'),
+                  trailing: const Icon(Icons.open_in_new_rounded),
+                  onTap: () async {
+                    final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
+                    if (await canLaunchUrl(url)) {
+                      await launchUrl(url, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
+              ),
               Text(
                 'Welcome, ${operatorUser?.username ?? 'Operator'}',
                 style: theme.textTheme.headlineMedium,

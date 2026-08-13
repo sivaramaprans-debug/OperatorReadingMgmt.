@@ -56,7 +56,7 @@ class _AdminReadingsListScreenState
             icon: const Icon(Icons.system_update_rounded),
             tooltip: 'Check for Updates',
             onPressed: () async {
-              final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt/releases/latest');
+              final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
               if (await canLaunchUrl(url)) {
                 await launchUrl(url, mode: LaunchMode.externalApplication);
               } else if (context.mounted) {

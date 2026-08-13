@@ -58,6 +58,8 @@ class SupabaseReadingWithDetails {
     required this.deviceRequiresHeatDay,
     required this.deviceHeatUnitFactors,
     required this.deviceDayUnitFactors,
+    this.deviceCategory = 'energy',
+    this.deviceMf = 1.0,
   });
 
   final SupabaseReading reading;
@@ -68,6 +70,14 @@ class SupabaseReadingWithDetails {
   final bool deviceRequiresHeatDay;
   final String deviceHeatUnitFactors;
   final String deviceDayUnitFactors;
+  /// 'energy' | 'dedusting' | 'water'
+  final String deviceCategory;
+  /// Device-level multiplication factor (used for dedusting/water single-metric calc)
+  final double deviceMf;
+
+  bool get isDedusting => deviceCategory == 'dedusting';
+  bool get isWater     => deviceCategory == 'water';
+  bool get isEnergy    => deviceCategory == 'energy';
 }
 
 class SupabaseReadingsRepository {
@@ -145,7 +155,7 @@ class SupabaseReadingsRepository {
   }) async {
     // Fetch readings with filter
     var query = supabase.from(_table).select(
-      '*, operators(username, full_name), devices(name, matrix, day_matrix, requires_heat_day, heat_unit_factors, day_unit_factors)',
+      '*, operators(username, full_name), devices(name, matrix, day_matrix, requires_heat_day, heat_unit_factors, day_unit_factors, device_category, multiplication_factor)',
     );
 
     if (operatorId != null) query = query.eq('operator_id', operatorId) as dynamic;
@@ -169,6 +179,8 @@ class SupabaseReadingsRepository {
         deviceRequiresHeatDay: devMap['requires_heat_day'] as bool? ?? false,
         deviceHeatUnitFactors: devMap['heat_unit_factors'] as String? ?? '{}',
         deviceDayUnitFactors: devMap['day_unit_factors'] as String? ?? '{}',
+        deviceCategory: devMap['device_category'] as String? ?? 'energy',
+        deviceMf: (devMap['multiplication_factor'] as num?)?.toDouble() ?? 1.0,
       );
     }).toList();
   }

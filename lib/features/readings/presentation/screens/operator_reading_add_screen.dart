@@ -9,6 +9,7 @@ import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/form_container.dart';
 import '../../../../shared/widgets/snackbar_helper.dart';
 import '../../../../core/utils/app_date_utils.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../notifiers/operator_readings_notifier.dart';
 import '../notifiers/reading_form_notifier.dart';
 import '../notifiers/previous_reading_provider.dart';
@@ -330,28 +331,73 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Device selector
-                  DropdownButtonFormField<String>(
-                    value: _selectedDeviceId,
-                    decoration: const InputDecoration(
-                      labelText: 'Device',
-                      prefixIcon: Icon(Icons.settings_input_component_outlined),
-                    ),
-                    items: devices.map((d) {
-                      return DropdownMenuItem(
-                        value: d.id,
-                        child: Text(d.name),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      setState(() {
-                        _selectedDeviceId = val;
-                        final newDevice = devices.firstWhere((d) => d.id == val);
-                        _setupControllersForDevice(newDevice);
-                      });
-                    },
-                  ),
+                  // ── Device Selector grouped by category ─────────────
+                  Builder(builder: (context) {
+                    // Build grouped dropdown items
+                    final energyDevices    = devices.where((d) => d.isEnergy).toList();
+                    final dedDevices       = devices.where((d) => d.isDedusting).toList();
+                    final waterDevices     = devices.where((d) => d.isWater).toList();
+
+                    DropdownMenuItem<String> devItem(SupabaseDevice d) =>
+                        DropdownMenuItem(
+                          value: d.id,
+                          child: Text(d.name, overflow: TextOverflow.ellipsis),
+                        );
+
+                    DropdownMenuItem<String> sectionHeader(String label, IconData icon, Color color) =>
+                        DropdownMenuItem<String>(
+                          enabled: false,
+                          value: '__header_$label',
+                          child: Row(children: [
+                            Icon(icon, size: 14, color: color),
+                            const SizedBox(width: 6),
+                            Text(label,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: color)),
+                          ]),
+                        );
+
+                    final allItems = <DropdownMenuItem<String>>[
+                      if (energyDevices.isNotEmpty) ...[
+                        sectionHeader('⚡ Energy Devices',
+                            Icons.bolt_rounded, theme.colorScheme.primary),
+                        ...energyDevices.map(devItem),
+                      ],
+                      if (dedDevices.isNotEmpty) ...[
+                        sectionHeader('🌀 Dedusting Equipment',
+                            Icons.air_rounded, AppColors.secondary),
+                        ...dedDevices.map(devItem),
+                      ],
+                      if (waterDevices.isNotEmpty) ...[
+                        sectionHeader('💧 Water Meters',
+                            Icons.water_drop_rounded, Colors.blue),
+                        ...waterDevices.map(devItem),
+                      ],
+                    ];
+
+                    return DropdownButtonFormField<String>(
+                      value: _selectedDeviceId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Device',
+                        prefixIcon: Icon(Icons.settings_input_component_outlined),
+                      ),
+                      items: allItems,
+                      onChanged: (val) {
+                        if (val == null || val.startsWith('__header_')) return;
+                        setState(() {
+                          _selectedDeviceId = val;
+                          final newDevice =
+                              devices.firstWhere((d) => d.id == val);
+                          _setupControllersForDevice(newDevice);
+                        });
+                      },
+                    );
+                  }),
                   const SizedBox(height: 16),
+
 
                   // Date & Time selection
                   Row(

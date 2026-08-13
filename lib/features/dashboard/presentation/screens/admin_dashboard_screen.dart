@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../routing/route_paths.dart';
 import '../../../../shared/widgets/loading_widget.dart';
+import '../../../../shared/widgets/app_update_banner.dart';
 import '../../../auth/presentation/notifiers/auth_notifier.dart';
 import '../notifiers/admin_dashboard_notifier.dart';
-
-import '../../../../shared/widgets/app_update_banner.dart';
 
 class AdminDashboardScreen extends ConsumerWidget {
   const AdminDashboardScreen({super.key});
@@ -22,6 +22,16 @@ class AdminDashboardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Admin Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update_rounded),
+            tooltip: 'Check for Updates',
+            onPressed: () async {
+              final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
+              if (await canLaunchUrl(url)) {
+                await launchUrl(url, mode: LaunchMode.externalApplication);
+              }
+            },
+          ),
           IconButton(
             tooltip: 'Logout',
             icon: const Icon(Icons.logout_rounded),
@@ -38,6 +48,22 @@ class AdminDashboardScreen extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const AppUpdateBanner(),
+              Card(
+                color: AppColors.primaryContainer.withOpacity(0.4),
+                margin: const EdgeInsets.only(bottom: 16),
+                child: ListTile(
+                  leading: const Icon(Icons.system_update_rounded, color: AppColors.primary, size: 32),
+                  title: const Text('Check for App Updates', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Tap to open GitHub Releases and download latest APK'),
+                  trailing: const Icon(Icons.open_in_new_rounded),
+                  onTap: () async {
+                    final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
+                    if (await canLaunchUrl(url)) {
+                      await launchUrl(url, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
+              ),
               Text(
                 'Welcome, ${admin?.username ?? 'Admin'}',
                 style: theme.textTheme.headlineMedium,
@@ -111,6 +137,18 @@ class AdminDashboardScreen extends ConsumerWidget {
                     icon: Icons.security_rounded,
                     onTap: () => context.push(RoutePaths.adminAuditLogs),
                   ),
+                  _ActionCard(
+                    title: 'Dedusting Sheet',
+                    icon: Icons.air_rounded,
+                    color: AppColors.secondary,
+                    onTap: () => context.push(RoutePaths.adminDeddustingReadings),
+                  ),
+                  _ActionCard(
+                    title: 'Water Meter Sheet',
+                    icon: Icons.water_drop_rounded,
+                    color: Colors.blue,
+                    onTap: () => context.push(RoutePaths.adminWaterReadings),
+                  ),
                 ],
               ),
             ],
@@ -151,13 +189,15 @@ class _StatCard extends StatelessWidget {
 }
 
 class _ActionCard extends StatelessWidget {
-  const _ActionCard({required this.title, required this.icon, required this.onTap});
+  const _ActionCard({required this.title, required this.icon, required this.onTap, this.color});
   final String title;
   final IconData icon;
   final VoidCallback onTap;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
+    final iconColor = color ?? Theme.of(context).colorScheme.primary;
     return Card(
       elevation: 0,
       color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
@@ -169,7 +209,7 @@ class _ActionCard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
-              Icon(icon, color: Theme.of(context).colorScheme.primary),
+              Icon(icon, color: iconColor),
               const SizedBox(width: 12),
               Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600))),
             ],
