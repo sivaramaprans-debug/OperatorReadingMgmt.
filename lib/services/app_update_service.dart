@@ -70,10 +70,7 @@ class AppUpdateService {
   Future<bool> launchApkDownload(String url) async {
     try {
       final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        return await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-      return false;
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       debugPrint('Launch APK error: $e');
       return false;

@@ -57,12 +57,14 @@ class _AdminReadingsListScreenState
             tooltip: 'Check for Updates',
             onPressed: () async {
               final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
-              if (await canLaunchUrl(url)) {
+              try {
                 await launchUrl(url, mode: LaunchMode.externalApplication);
-              } else if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Could not launch update page.')),
-                );
+              } catch (_) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Could not launch update page.')),
+                  );
+                }
               }
             },
           ),

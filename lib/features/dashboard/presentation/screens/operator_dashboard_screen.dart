@@ -27,9 +27,9 @@ class OperatorDashboardScreen extends ConsumerWidget {
             tooltip: 'Check for Updates',
             onPressed: () async {
               final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
-              if (await canLaunchUrl(url)) {
+              try {
                 await launchUrl(url, mode: LaunchMode.externalApplication);
-              }
+              } catch (_) {}
             },
           ),
           IconButton(
@@ -58,9 +58,9 @@ class OperatorDashboardScreen extends ConsumerWidget {
                   trailing: const Icon(Icons.open_in_new_rounded),
                   onTap: () async {
                     final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
-                    if (await canLaunchUrl(url)) {
+                    try {
                       await launchUrl(url, mode: LaunchMode.externalApplication);
-                    }
+                    } catch (_) {}
                   },
                 ),
               ),
