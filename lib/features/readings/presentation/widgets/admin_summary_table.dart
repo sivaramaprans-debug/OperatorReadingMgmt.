@@ -26,8 +26,14 @@ class AdminSummaryTable extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final readingsAsync = ref.watch(adminReadingsProvider);
+    final readingsAsync = ref.watch(
+      readingType == 'heat'
+          ? adminHeatSummaryReadingsProvider
+          : adminDaySummaryReadingsProvider,
+    );
     final devicesAsync = ref.watch(allDevicesProvider);
+    final filter = ref.watch(adminReadingsFilterProvider);
+    final selectedOperatorId = filter.operatorId;
 
     return readingsAsync.when(
       loading: () => const LoadingWidget(message: 'Loading summary...'),
@@ -36,13 +42,13 @@ class AdminSummaryTable extends ConsumerWidget {
         loading: () => const LoadingWidget(message: 'Loading devices...'),
         error: (e, _) => Center(child: Text('Error: $e')),
         data: (allDevices) {
-          // Filter readings by type
-          final rows = allReadings
+          // Filter readings by type from the full set
+          final typeReadings = allReadings
               .where((rwd) => rwd.reading.readingType == readingType)
               .toList()
             ..sort((a, b) => b.reading.readingDate.compareTo(a.reading.readingDate));
 
-          if (rows.isEmpty) {
+          if (typeReadings.isEmpty) {
             return EmptyStateWidget(
               icon: Icons.table_chart_outlined,
               title: 'No ${readingType == 'day' ? 'Day' : 'Heat'} Readings',
@@ -50,10 +56,9 @@ class AdminSummaryTable extends ConsumerWidget {
             );
           }
 
-          // BUG FIX: Build qualified devices ONLY from device IDs that appear
-          // in the filtered reading rows — prevents empty columns when an
-          // operator filter is active.
-          final deviceIdsInRows = rows.map((r) => r.reading.deviceId).toSet();
+          // Build qualified devices ONLY from device IDs that appear
+          // in the reading rows of this type — prevents empty columns.
+          final deviceIdsInRows = typeReadings.map((r) => r.reading.deviceId).toSet();
           final qualifiedDevices = allDevices.where((d) {
             if (!deviceIdsInRows.contains(d.id)) return false;
             if (readingType == 'heat' && !d.requiresHeatDay) return false;
@@ -81,14 +86,15 @@ class AdminSummaryTable extends ConsumerWidget {
           // Build device name map
           final deviceNames = {for (final d in qualifiedDevices) d.id: d.name};
 
-          // Group all same-type readings by deviceId for diff calculation
+          // Group ALL readings of this type by deviceId for true chronological diff calculation
           final readingsByDevice = <String, List<SupabaseReadingWithDetails>>{};
-          for (final rwd in rows) {
-            readingsByDevice.putIfAbsent(rwd.reading.deviceId, () => []).add(rwd);
+          for (final rwd in allReadings) {
+            if (rwd.reading.readingType == readingType) {
+              readingsByDevice.putIfAbsent(rwd.reading.deviceId, () => []).add(rwd);
+            }
           }
 
           // Compute differences per device (sorted oldest→newest for calculation)
-          // diffMap[readingId][unit] = diff value (null = first reading)
           final diffMap = <String, Map<String, double?>>{};
           for (final deviceId in readingsByDevice.keys) {
             final deviceRows = List<SupabaseReadingWithDetails>.from(readingsByDevice[deviceId]!);
@@ -123,8 +129,13 @@ class AdminSummaryTable extends ConsumerWidget {
             }
           }
 
+          // Now filter the rows to display in the UI based on the selected operator filter
+          final filteredRows = selectedOperatorId == null
+              ? typeReadings
+              : typeReadings.where((rwd) => rwd.reading.operatorId == selectedOperatorId).toList();
+
           return _SummaryTableView(
-            rows: rows,
+            rows: filteredRows,
             qualifiedDevices: qualifiedDevices,
             deviceNames: deviceNames,
             deviceFactors: deviceFactors,
@@ -185,7 +196,6 @@ class _SummaryTableView extends ConsumerWidget {
   final bool showHeatNumber;
 
   static const double _fixedW = 80.0;
-  static const double _unitW = 100.0;
 
   // Sub-widths for Heat Summary device blocks
   static const double _subHeatW = 55.0;
@@ -194,7 +204,7 @@ class _SummaryTableView extends ConsumerWidget {
   static const double _subActW = 60.0;
   static const double _deviceBlockW = _subHeatW + _subTimeW + _subValW * 2 + _subActW + 4; // Includes dividers
 
-  static Widget _hCell(String text, {double width = _unitW, Color? bg, bool bold = true}) =>
+  static Widget _hCell(String text, {double width = 100.0, Color? bg, bool bold = true}) =>
       Container(
         width: width,
         height: 34,
@@ -211,7 +221,7 @@ class _SummaryTableView extends ConsumerWidget {
         ),
       );
 
-  static Widget _dCell(String text, {double width = _unitW, Color? textColor}) =>
+  static Widget _dCell(String text, {double width = 100.0, Color? textColor}) =>
       Container(
         width: width,
         height: 38,
@@ -243,10 +253,22 @@ class _SummaryTableView extends ConsumerWidget {
     final headerBg = theme.colorScheme.surfaceContainerHighest.withOpacity(0.5);
     final deviceHeaderBg = AppColors.primaryContainer.withOpacity(0.4);
 
+    final isHeat = showHeatNumber;
+
+    // Sub-widths for Day Summary device blocks (KWH, KWHLT, Act)
+    const double daySubValW = 75.0;
+    const double daySubActW = 60.0;
+    const double dayDeviceBlockW = daySubValW * 2 + daySubActW + 2; // 212.0
+
+    // Device block width depending on tab
+    final deviceBlockW = isHeat ? _deviceBlockW : dayDeviceBlockW;
+
     // Grouping logic for Heat Summary
     final List<_GroupedHeatRow> groupedHeatRows = [];
+    // Grouping logic for Day Summary (exactly one row per Business Day)
+    final Map<int, Map<String, SupabaseReadingWithDetails>> groupedDayRows = {};
 
-    if (showHeatNumber) {
+    if (isHeat) {
       // 1. Group readings by device
       final Map<String, List<SupabaseReadingWithDetails>> deviceReadingsMap = {};
       for (final rwd in rows) {
@@ -307,7 +329,18 @@ class _SummaryTableView extends ConsumerWidget {
         if (dayCmp != 0) return dayCmp;
         return a.sequenceIndex.compareTo(b.sequenceIndex);
       });
+    } else {
+      // Day Summary: Group readings by Business Day only
+      for (final rwd in rows) {
+        final bizDay = AppDateUtils.toBusinessDayMidnightUtcMs(rwd.reading.readingDate);
+        groupedDayRows.putIfAbsent(bizDay, () => {})[rwd.reading.deviceId] = rwd;
+      }
     }
+
+    final sortedDayKeys = groupedDayRows.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+
+    final totalDisplayRows = isHeat ? groupedHeatRows.length : sortedDayKeys.length;
 
     return SelectionArea(
       child: Column(
@@ -324,9 +357,9 @@ class _SummaryTableView extends ConsumerWidget {
             child: Row(
               children: [
                 Text(
-                  showHeatNumber
-                      ? 'Filtered Records (Grouped: ${groupedHeatRows.length} heats)'
-                      : 'Filtered Records (${rows.length})',
+                  isHeat
+                      ? 'Filtered Records (Grouped: $totalDisplayRows heats)'
+                      : 'Filtered Records (Grouped: $totalDisplayRows days)',
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 const Spacer(),
@@ -346,7 +379,7 @@ class _SummaryTableView extends ConsumerWidget {
                   onPressed: () async {
                     final exporter = ExportReadingsUseCase();
                     final filePath = await exporter.exportAdminSheetToExcel(
-                      sheetTitle: showHeatNumber ? 'Heat_Summary' : 'Day_Summary',
+                      sheetTitle: isHeat ? 'Heat_Summary' : 'Day_Summary',
                       devices: qualifiedDevices,
                       readings: rows,
                       diffMap: diffMap,
@@ -396,16 +429,10 @@ class _SummaryTableView extends ConsumerWidget {
                       // ── Row 1: Spanning headers ─────────────────────────────────
                       Row(children: [
                         _hCell('Date', width: _fixedW, bg: headerBg),
-                        if (!showHeatNumber) ...[
-                          _divV(),
-                          _hCell('Reading Time', width: _fixedW, bg: headerBg),
-                          _divV(),
-                          _hCell('Posted Time', width: _fixedW, bg: headerBg),
-                        ],
                         ...qualifiedDevices.expand((d) => [
                           _divV(),
                           Container(
-                            width: showHeatNumber ? _deviceBlockW : (_unitW * 2 + 1),
+                            width: deviceBlockW,
                             height: 34,
                             alignment: Alignment.center,
                             color: deviceHeaderBg,
@@ -416,8 +443,6 @@ class _SummaryTableView extends ConsumerWidget {
                             ),
                           ),
                         ]),
-                        _divV(),
-                        _hCell('Actions', width: showHeatNumber ? 0 : _fixedW, bg: showHeatNumber ? Colors.transparent : headerBg),
                       ]),
 
                       _divH(),
@@ -425,36 +450,26 @@ class _SummaryTableView extends ConsumerWidget {
                       // ── Row 2: Sub-column headers ───────────────────────────────
                       Row(children: [
                         _hCell('', width: _fixedW, bg: headerBg),
-                        if (!showHeatNumber) ...[
-                          _divV(),
-                          _hCell('', width: _fixedW, bg: headerBg),
-                          _divV(),
-                          _hCell('', width: _fixedW, bg: headerBg),
-                        ],
                         ...qualifiedDevices.expand((d) => [
                           _divV(),
-                          if (showHeatNumber) ...[
+                          if (isHeat) ...[
                             _hCell('Heat #', width: _subHeatW, bg: deviceHeaderBg.withOpacity(0.5)),
                             _divV(),
                             _hCell('Time', width: _subTimeW, bg: deviceHeaderBg.withOpacity(0.5)),
                             _divV(),
                           ],
-                          _hCell('KWH', width: showHeatNumber ? _subValW : _unitW, bg: deviceHeaderBg.withOpacity(0.5)),
+                          _hCell('KWH', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5)),
                           _divV(),
-                          _hCell('KWHLT', width: showHeatNumber ? _subValW : _unitW, bg: deviceHeaderBg.withOpacity(0.5)),
-                          if (showHeatNumber) ...[
-                            _divV(),
-                            _hCell('Act', width: _subActW, bg: deviceHeaderBg.withOpacity(0.5)),
-                          ],
+                          _hCell('KWHLT', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5)),
+                          _divV(),
+                          _hCell('Act', width: _subActW, bg: deviceHeaderBg.withOpacity(0.5)),
                         ]),
-                        _divV(),
-                        _hCell('', width: showHeatNumber ? 0 : _fixedW, bg: showHeatNumber ? Colors.transparent : headerBg),
                       ]),
 
                       _divH(),
 
                       // ── Data rows ────────────────────────────────────────────────
-                      if (showHeatNumber)
+                      if (isHeat)
                         ...groupedHeatRows.map((gr) {
                           final dateStr = DateFormat('dd MMM yy').format(
                             DateTime.fromMillisecondsSinceEpoch(gr.businessDayMidnightMs, isUtc: true).toLocal(),
@@ -524,66 +539,70 @@ class _SummaryTableView extends ConsumerWidget {
                                     ),
                                   ];
                                 }),
-                                _divV(),
-                                const SizedBox(width: 0, height: 38),
                               ]),
                               _divH(),
                             ],
                           );
                         })
                       else
-                        ...rows.map((rwd) {
-                          final r = rwd.reading;
-                          final readingDt = DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal();
-                          final postedDt = DateTime.fromMillisecondsSinceEpoch(r.createdAt, isUtc: true).toLocal();
-                          final dateStr = DateFormat('dd MMM yy').format(readingDt);
-                          final readingTimeStr = DateFormat('hh:mm a').format(readingDt);
-                          final postedTimeStr = DateFormat('hh:mm a').format(postedDt);
+                        ...sortedDayKeys.map((day) {
+                          final dateStr = DateFormat('dd MMM yy').format(
+                            DateTime.fromMillisecondsSinceEpoch(day, isUtc: true).toLocal(),
+                          );
 
                           return Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Row(children: [
                                 _dCell(dateStr, width: _fixedW),
-                                _divV(),
-                                _dCell(readingTimeStr, width: _fixedW),
-                                _divV(),
-                                _dCell(postedTimeStr, width: _fixedW),
                                 ...qualifiedDevices.expand((d) {
-                                  final belongs = r.deviceId == d.id;
+                                  final rwd = groupedDayRows[day]?[d.id];
+                                  if (rwd == null) {
+                                    return [
+                                      _divV(),
+                                      _dCell('—', width: _subValW),
+                                      _divV(),
+                                      _dCell('—', width: _subValW),
+                                      _divV(),
+                                      const SizedBox(width: _subActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
+                                    ];
+                                  }
+
+                                  final r = rwd.reading;
+
                                   return [
                                     _divV(),
-                                    _dCell(belongs ? _consStr(r.id, 'KWH', d.id) : '—'),
+                                    _dCell(_consStr(r.id, 'KWH', d.id), width: _subValW),
                                     _divV(),
-                                    _dCell(belongs ? _consStr(r.id, 'KWHLT', d.id) : '—'),
+                                    _dCell(_consStr(r.id, 'KWHLT', d.id), width: _subValW),
+                                    _divV(),
+                                    SizedBox(
+                                      width: _subActW,
+                                      height: 38,
+                                      child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.edit_rounded, size: 14),
+                                            onPressed: () {
+                                              context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
+                                            },
+                                            tooltip: 'Edit',
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
+                                            onPressed: () => _deleteReading(context, ref, r.id),
+                                            tooltip: 'Delete',
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ];
                                 }),
-                                _divV(),
-                                SizedBox(
-                                  width: _fixedW,
-                                  height: 38,
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit_rounded, size: 16),
-                                        onPressed: () {
-                                          context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
-                                        },
-                                        tooltip: 'Edit',
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete_rounded, size: 16, color: Colors.red),
-                                        onPressed: () => _deleteReading(context, ref, r.id),
-                                        tooltip: 'Delete',
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                      ),
-                                    ],
-                                  ),
-                                ),
                               ]),
                               _divH(),
                             ],
@@ -621,6 +640,8 @@ class _SummaryTableView extends ConsumerWidget {
     if (confirm == true) {
       await ref.read(supabaseReadingsRepoProvider).delete(readingId);
       ref.invalidate(adminReadingsProvider);
+      ref.invalidate(adminDaySummaryReadingsProvider);
+      ref.invalidate(adminHeatSummaryReadingsProvider);
     }
   }
 }

@@ -66,23 +66,27 @@ class ExportReadingsUseCase {
       final sheet = excel[sheetName];
       excel.delete('Sheet1');
 
+      final isHeat = sheetTitle.contains('Heat');
+
       final row1 = <CellValue?>[
         TextCellValue('Date'),
-        TextCellValue('Reading Time'),
-        TextCellValue('Posted Time'),
-        TextCellValue('Heat #'),
       ];
 
       final row2 = <CellValue?>[
-        TextCellValue(''),
-        TextCellValue(''),
-        TextCellValue(''),
         TextCellValue(''),
       ];
 
       for (final d in devices) {
         row1.add(TextCellValue(d.name as String));
-        row1.add(TextCellValue(''));
+        if (isHeat) {
+          row1.add(TextCellValue(''));
+          row1.add(TextCellValue(''));
+          row1.add(TextCellValue(''));
+          row2.add(TextCellValue('Heat #'));
+          row2.add(TextCellValue('Time'));
+        } else {
+          row1.add(TextCellValue(''));
+        }
         row2.add(TextCellValue('KWH Consump'));
         row2.add(TextCellValue('KWHLT Consump'));
       }
@@ -90,43 +94,149 @@ class ExportReadingsUseCase {
       sheet.appendRow(row1);
       sheet.appendRow(row2);
 
-      for (final rwd in readings) {
-        final r = rwd.reading;
-        final readingDt = DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal();
-        final postedDt = DateTime.fromMillisecondsSinceEpoch(r.createdAt, isUtc: true).toLocal();
-        final dateStr = DateFormat('dd MMM yyyy').format(readingDt);
-        final readingTimeStr = DateFormat('hh:mm a').format(readingDt);
-        final postedTimeStr = DateFormat('hh:mm a').format(postedDt);
+      if (isHeat) {
+        // Grouping logic for Heat
+        final Map<String, List<SupabaseReadingWithDetails>> deviceReadingsMap = {};
+        for (final rwd in readings) {
+          deviceReadingsMap.putIfAbsent(rwd.reading.deviceId, () => []).add(rwd);
+        }
 
-        final row = <CellValue?>[
-          TextCellValue(dateStr),
-          TextCellValue(readingTimeStr),
-          TextCellValue(postedTimeStr),
-          TextCellValue(r.heatNumber.isEmpty ? '-' : r.heatNumber),
-        ];
+        final Map<String, Map<int, List<SupabaseReadingWithDetails>>> deviceDayReadings = {};
+        for (final devId in deviceReadingsMap.keys) {
+          final devRwds = List<SupabaseReadingWithDetails>.from(deviceReadingsMap[devId]!)
+            ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
 
-        for (final d in devices) {
-          final belongs = r.deviceId == d.id;
-          if (belongs) {
-            final diffs = diffMap[r.id] ?? {};
-            final kwhDiff = diffs['KWH'] ?? diffs['kwh'];
-            final kwhltDiff = diffs['KWHLT'] ?? diffs['kwhlt'];
+          final Map<int, List<SupabaseReadingWithDetails>> dayMap = {};
+          for (final rwd in devRwds) {
+            final bizDay = AppDateUtils.toBusinessDayMidnightUtcMs(rwd.reading.readingDate);
+            dayMap.putIfAbsent(bizDay, () => []).add(rwd);
+          }
+          deviceDayReadings[devId] = dayMap;
+        }
 
-            final factors = deviceFactors[d.id as String] ?? {};
-            final kwhFactor = factors['KWH'] ?? factors['kwh'] ?? 1.0;
-            final kwhltFactor = factors['KWHLT'] ?? factors['kwhlt'] ?? 1.0;
-
-            final kwhCons = kwhDiff != null ? kwhDiff * kwhFactor : null;
-            final kwhltCons = kwhltDiff != null ? kwhltDiff * kwhltFactor : null;
-
-            row.add(kwhCons != null ? DoubleCellValue(kwhCons) : TextCellValue('-'));
-            row.add(kwhltCons != null ? DoubleCellValue(kwhltCons) : TextCellValue('-'));
-          } else {
-            row.add(TextCellValue('-'));
-            row.add(TextCellValue('-'));
+        final Map<int, int> maxSeqPerDay = {};
+        for (final dayMap in deviceDayReadings.values) {
+          for (final entry in dayMap.entries) {
+            final day = entry.key;
+            final count = entry.value.length;
+            final maxIndex = count - 1;
+            final existingMax = maxSeqPerDay[day] ?? -1;
+            if (maxIndex > existingMax) {
+              maxSeqPerDay[day] = maxIndex;
+            }
           }
         }
-        sheet.appendRow(row);
+
+        final List<_GroupedHeatRow> groupedHeatRows = [];
+        for (final day in maxSeqPerDay.keys) {
+          final maxIndex = maxSeqPerDay[day]!;
+          for (int seq = 0; seq <= maxIndex; seq++) {
+            final Map<String, SupabaseReadingWithDetails> devMap = {};
+            for (final devId in deviceDayReadings.keys) {
+              final list = deviceDayReadings[devId]?[day];
+              if (list != null && seq < list.length) {
+                devMap[devId] = list[seq];
+              }
+            }
+            groupedHeatRows.add(_GroupedHeatRow(
+              businessDayMidnightMs: day,
+              sequenceIndex: seq,
+              deviceReadings: devMap,
+            ));
+          }
+        }
+
+        groupedHeatRows.sort((a, b) {
+          final dayCmp = b.businessDayMidnightMs.compareTo(a.businessDayMidnightMs);
+          if (dayCmp != 0) return dayCmp;
+          return a.sequenceIndex.compareTo(b.sequenceIndex);
+        });
+
+        for (final gr in groupedHeatRows) {
+          final dateStr = DateFormat('dd MMM yyyy').format(
+            DateTime.fromMillisecondsSinceEpoch(gr.businessDayMidnightMs, isUtc: true).toLocal(),
+          );
+
+          final row = <CellValue?>[
+            TextCellValue(dateStr),
+          ];
+
+          for (final d in devices) {
+            final rwd = gr.deviceReadings[d.id as String];
+            if (rwd == null) {
+              row.add(TextCellValue('-'));
+              row.add(TextCellValue('-'));
+              row.add(TextCellValue('-'));
+              row.add(TextCellValue('-'));
+            } else {
+              final r = rwd.reading;
+              final readingTimeStr = DateFormat('hh:mm a').format(
+                DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal(),
+              );
+
+              final diffs = diffMap[r.id] ?? {};
+              final kwhDiff = diffs['KWH'] ?? diffs['kwh'];
+              final kwhltDiff = diffs['KWHLT'] ?? diffs['kwhlt'];
+
+              final factors = deviceFactors[d.id as String] ?? {};
+              final kwhFactor = factors['KWH'] ?? factors['kwh'] ?? 1.0;
+              final kwhltFactor = factors['KWHLT'] ?? factors['kwhlt'] ?? 1.0;
+
+              final kwhCons = kwhDiff != null ? kwhDiff * kwhFactor : null;
+              final kwhltCons = kwhltDiff != null ? kwhltDiff * kwhltFactor : null;
+
+              row.add(TextCellValue(r.heatNumber));
+              row.add(TextCellValue(readingTimeStr));
+              row.add(kwhCons != null ? DoubleCellValue(kwhCons) : TextCellValue('-'));
+              row.add(kwhltCons != null ? DoubleCellValue(kwhltCons) : TextCellValue('-'));
+            }
+          }
+          sheet.appendRow(row);
+        }
+      } else {
+        // Grouping logic for Day Summary (exactly one row per Business Day)
+        final Map<int, Map<String, SupabaseReadingWithDetails>> groupedDayRows = {};
+        for (final rwd in readings) {
+          final bizDay = AppDateUtils.toBusinessDayMidnightUtcMs(rwd.reading.readingDate);
+          groupedDayRows.putIfAbsent(bizDay, () => {})[rwd.reading.deviceId] = rwd;
+        }
+
+        final sortedDayKeys = groupedDayRows.keys.toList()
+          ..sort((a, b) => b.compareTo(a));
+
+        for (final day in sortedDayKeys) {
+          final dateStr = DateFormat('dd MMM yyyy').format(
+            DateTime.fromMillisecondsSinceEpoch(day, isUtc: true).toLocal(),
+          );
+
+          final row = <CellValue?>[
+            TextCellValue(dateStr),
+          ];
+
+          for (final d in devices) {
+            final rwd = groupedDayRows[day]?[d.id as String];
+            if (rwd == null) {
+              row.add(TextCellValue('-'));
+              row.add(TextCellValue('-'));
+            } else {
+              final r = rwd.reading;
+              final diffs = diffMap[r.id] ?? {};
+              final kwhDiff = diffs['KWH'] ?? diffs['kwh'];
+              final kwhltDiff = diffs['KWHLT'] ?? diffs['kwhlt'];
+
+              final factors = deviceFactors[d.id as String] ?? {};
+              final kwhFactor = factors['KWH'] ?? factors['kwh'] ?? 1.0;
+              final kwhltFactor = factors['KWHLT'] ?? factors['kwhlt'] ?? 1.0;
+
+              final kwhCons = kwhDiff != null ? kwhDiff * kwhFactor : null;
+              final kwhltCons = kwhltDiff != null ? kwhltDiff * kwhltFactor : null;
+
+              row.add(kwhCons != null ? DoubleCellValue(kwhCons) : TextCellValue('-'));
+              row.add(kwhltCons != null ? DoubleCellValue(kwhltCons) : TextCellValue('-'));
+            }
+          }
+          sheet.appendRow(row);
+        }
       }
 
       final bytes = excel.save();
@@ -365,4 +475,16 @@ class ExportReadingsUseCase {
       return false;
     }
   }
+}
+
+class _GroupedHeatRow {
+  final int businessDayMidnightMs;
+  final int sequenceIndex;
+  final Map<String, SupabaseReadingWithDetails> deviceReadings;
+
+  _GroupedHeatRow({
+    required this.businessDayMidnightMs,
+    required this.sequenceIndex,
+    required this.deviceReadings,
+  });
 }

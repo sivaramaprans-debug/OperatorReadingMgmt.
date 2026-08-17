@@ -29,6 +29,7 @@ class ReadingsCalculatedTable extends ConsumerWidget {
     this.showOperatorColumn = false,
     this.operatorNames = const {},
     this.showAdminActions = false,
+    this.filterOperatorId,
   });
 
   final List<SupabaseReading> readings;
@@ -42,6 +43,7 @@ class ReadingsCalculatedTable extends ConsumerWidget {
   final Map<String, String> operatorNames;
   /// Pass true to show Edit/Delete buttons
   final bool showAdminActions;
+  final String? filterOperatorId;
 
   static bool _isCumulativeUnit(String unit) {
     final u = unit.trim().toUpperCase();
@@ -176,9 +178,12 @@ class ReadingsCalculatedTable extends ConsumerWidget {
     final theme = Theme.of(context);
     final diffMap = _buildDifferenceMap();
 
-    // Display order: newest first
-    final displayReadings = List<SupabaseReading>.from(readings)
-      ..sort((a, b) => b.readingDate.compareTo(a.readingDate));
+    // Filter display rows if filterOperatorId is set
+    var displayReadings = List<SupabaseReading>.from(readings);
+    if (filterOperatorId != null) {
+      displayReadings = displayReadings.where((r) => r.operatorId == filterOperatorId).toList();
+    }
+    displayReadings.sort((a, b) => b.readingDate.compareTo(a.readingDate));
 
     final headerBg = theme.colorScheme.surfaceContainerHighest.withOpacity(0.5);
     final unitHeaderBg = AppColors.primaryContainer.withOpacity(0.35);

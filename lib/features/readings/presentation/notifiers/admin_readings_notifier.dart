@@ -29,11 +29,39 @@ final adminReadingsProvider =
   final repo = ref.watch(supabaseReadingsRepoProvider);
 
   return repo.search(
-    operatorId: filter.operatorId,
     deviceIds: filter.deviceIds.isNotEmpty ? filter.deviceIds : null,
     readingType: filter.readingType,
     fromDateMs: filter.fromDateMs,
     toDateMs: filter.toDateMs,
+    limit: 500,
+  );
+});
+
+final adminDaySummaryReadingsProvider =
+    FutureProvider.autoDispose<List<SupabaseReadingWithDetails>>((ref) async {
+  final filter = ref.watch(adminReadingsFilterProvider);
+  final repo = ref.watch(supabaseReadingsRepoProvider);
+
+  return repo.search(
+    deviceIds: filter.deviceIds.isNotEmpty ? filter.deviceIds : null,
+    readingType: 'day',
+    fromDateMs: filter.fromDateMs,
+    toDateMs: filter.toDateMs,
+    limit: 500,
+  );
+});
+
+final adminHeatSummaryReadingsProvider =
+    FutureProvider.autoDispose<List<SupabaseReadingWithDetails>>((ref) async {
+  final filter = ref.watch(adminReadingsFilterProvider);
+  final repo = ref.watch(supabaseReadingsRepoProvider);
+
+  return repo.search(
+    deviceIds: filter.deviceIds.isNotEmpty ? filter.deviceIds : null,
+    readingType: 'heat',
+    fromDateMs: filter.fromDateMs,
+    toDateMs: filter.toDateMs,
+    limit: 500,
   );
 });
 

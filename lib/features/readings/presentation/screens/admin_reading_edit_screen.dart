@@ -202,6 +202,8 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
     if (state.success) {
       SnackbarHelper.showSuccess(context, 'Reading saved successfully');
       ref.invalidate(adminReadingsProvider);
+      ref.invalidate(adminDaySummaryReadingsProvider);
+      ref.invalidate(adminHeatSummaryReadingsProvider);
       context.pop();
     } else if (state.error != null) {
       SnackbarHelper.showError(context, state.error!);

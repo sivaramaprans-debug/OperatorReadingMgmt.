@@ -521,6 +521,7 @@ class _AdminDeviceReadingsSectionState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final filter = ref.watch(adminReadingsFilterProvider);
 
     // Apply local per-device type filter
     final filtered = _selectedType == null
@@ -533,6 +534,10 @@ class _AdminDeviceReadingsSectionState
     final opNamesFiltered = {
       for (final rwd in filtered) rwd.reading.id: rwd.operatorName
     };
+
+    final hasMatchingOperator = filter.operatorId == null
+        ? filtered.isNotEmpty
+        : filtered.any((rwd) => rwd.reading.operatorId == filter.operatorId);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -635,6 +640,8 @@ class _AdminDeviceReadingsSectionState
                     if (confirm == true) {
                       await ref.read(supabaseReadingsRepoProvider).deleteByDeviceId(widget.deviceId);
                       ref.invalidate(adminReadingsProvider);
+                      ref.invalidate(adminDaySummaryReadingsProvider);
+                      ref.invalidate(adminHeatSummaryReadingsProvider);
                     }
                   },
                 ),
@@ -642,7 +649,7 @@ class _AdminDeviceReadingsSectionState
             ),
           ),
 
-          if (filtered.isEmpty)
+          if (!hasMatchingOperator)
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
@@ -662,6 +669,7 @@ class _AdminDeviceReadingsSectionState
               showOperatorColumn: true,
               operatorNames: opNamesFiltered,
               showAdminActions: true,
+              filterOperatorId: filter.operatorId,
             ),
         ],
       ),
