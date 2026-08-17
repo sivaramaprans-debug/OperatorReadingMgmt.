@@ -323,11 +323,11 @@ class _SummaryTableView extends ConsumerWidget {
         }
       }
 
-      // Sort: businessDayMidnightMs descending, sequenceIndex ascending
+      // Sort: businessDayMidnightMs descending, sequenceIndex descending
       groupedHeatRows.sort((a, b) {
         final dayCmp = b.businessDayMidnightMs.compareTo(a.businessDayMidnightMs);
         if (dayCmp != 0) return dayCmp;
-        return a.sequenceIndex.compareTo(b.sequenceIndex);
+        return b.sequenceIndex.compareTo(a.sequenceIndex);
       });
     } else {
       // Day Summary: Group readings by Business Day only

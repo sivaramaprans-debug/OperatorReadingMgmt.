@@ -149,7 +149,7 @@ class ExportReadingsUseCase {
         groupedHeatRows.sort((a, b) {
           final dayCmp = b.businessDayMidnightMs.compareTo(a.businessDayMidnightMs);
           if (dayCmp != 0) return dayCmp;
-          return a.sequenceIndex.compareTo(b.sequenceIndex);
+          return b.sequenceIndex.compareTo(a.sequenceIndex);
         });
 
         for (final gr in groupedHeatRows) {
