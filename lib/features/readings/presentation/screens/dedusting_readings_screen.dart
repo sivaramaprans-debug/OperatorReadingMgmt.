@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/app_date_utils.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 import '../../../../database/repositories/supabase_operators_repository.dart';
 import '../../../../database/supabase_providers.dart';
@@ -244,64 +245,66 @@ class _DedSheetBody extends StatelessWidget {
       byOp.putIfAbsent(r.operatorName, () => []).add(r);
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: byOp.entries.map((opEntry) {
-        final opName    = opEntry.key;
-        final opReadings = opEntry.value;
+    return SelectionArea(
+      child: ListView(
+        padding: const EdgeInsets.all(12),
+        children: byOp.entries.map((opEntry) {
+          final opName    = opEntry.key;
+          final opReadings = opEntry.value;
 
-        // Group by device within this operator
-        final Map<String, List<SupabaseReadingWithDetails>> byDevice = {};
-        for (final r in opReadings) {
-          byDevice.putIfAbsent(r.deviceName, () => []).add(r);
-        }
-
-        // Sort devices by name
-        final deviceNames = byDevice.keys.toList()..sort();
-
-        // Collect all unique dates across all devices, sorted ascending
-        final allDatesMs = <int>{};
-        for (final devReadings in byDevice.values) {
-          for (final r in devReadings) {
-            allDatesMs.add(r.reading.readingDate);
+          // Group by device within this operator
+          final Map<String, List<SupabaseReadingWithDetails>> byDevice = {};
+          for (final r in opReadings) {
+            byDevice.putIfAbsent(r.deviceName, () => []).add(r);
           }
-        }
-        final sortedDates = allDatesMs.toList()..sort();
 
-        // Build diff/consumption per device per date
-        // For each device: sort by date asc, compute diff from previous row
-        final Map<String, Map<int, Map<String, double?>>> devDateData = {};
-        for (final devName in deviceNames) {
-          final devRwds = byDevice[devName]!
-            ..sort((a, b) =>
-                a.reading.readingDate.compareTo(b.reading.readingDate));
-          final dateMap = <int, Map<String, double?>>{};
-          for (int i = 0; i < devRwds.length; i++) {
-            final cur    = devRwds[i];
-            final vals   = _parseVals(cur.reading.readingValues);
-            final metric = cur.reading.deviceId.isEmpty ? 'KWH' : 'KWH';
-            final mf     = cur.deviceMf;
-            final reading = vals[metric] ?? vals.values.firstOrNull;
+          // Sort devices by name
+          final deviceNames = byDevice.keys.toList()..sort();
 
-            double? diff;
-            double? consumption;
-            if (i > 0) {
-              final prevVals =
-                  _parseVals(devRwds[i - 1].reading.readingValues);
-              final prev = prevVals[metric] ?? prevVals.values.firstOrNull;
-              if (reading != null && prev != null) {
-                diff        = reading - prev;
-                consumption = diff * mf;
-              }
+          // Collect all unique dates across all devices, sorted ascending
+          final allDatesMs = <int>{};
+          for (final devReadings in byDevice.values) {
+            for (final r in devReadings) {
+              allDatesMs.add(AppDateUtils.toBusinessDayMidnightUtcMs(r.reading.readingDate));
             }
-            dateMap[cur.reading.readingDate] = {
-              'reading':     reading,
-              'diff':        diff,
-              'consumption': consumption,
-            };
           }
-          devDateData[devName] = dateMap;
-        }
+          final sortedDates = allDatesMs.toList()..sort();
+
+          // Build diff/consumption per device per date
+          // For each device: sort by date asc, compute diff from previous row
+          final Map<String, Map<int, Map<String, double?>>> devDateData = {};
+          for (final devName in deviceNames) {
+            final devRwds = byDevice[devName]!
+              ..sort((a, b) =>
+                  a.reading.readingDate.compareTo(b.reading.readingDate));
+            final dateMap = <int, Map<String, double?>>{};
+            for (int i = 0; i < devRwds.length; i++) {
+              final cur    = devRwds[i];
+              final vals   = _parseVals(cur.reading.readingValues);
+              final metric = 'KWH';
+              final mf     = cur.deviceMf;
+              final reading = vals[metric] ?? vals.values.firstOrNull;
+
+              double? diff;
+              double? consumption;
+              if (i > 0) {
+                final prevVals =
+                    _parseVals(devRwds[i - 1].reading.readingValues);
+                final prev = prevVals[metric] ?? prevVals.values.firstOrNull;
+                if (reading != null && prev != null) {
+                  diff        = reading - prev;
+                  consumption = diff * mf;
+                }
+              }
+              final bizDay = AppDateUtils.toBusinessDayMidnightUtcMs(cur.reading.readingDate);
+              dateMap[bizDay] = {
+                'reading':     reading,
+                'diff':        diff,
+                'consumption': consumption,
+              };
+            }
+            devDateData[devName] = dateMap;
+          }
 
         return Card(
           margin: const EdgeInsets.only(bottom: 20),
@@ -345,6 +348,7 @@ class _DedSheetBody extends StatelessWidget {
           ),
         );
       }).toList(),
+      ),
     );
   }
 

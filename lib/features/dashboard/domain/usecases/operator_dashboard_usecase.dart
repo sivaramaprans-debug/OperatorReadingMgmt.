@@ -23,8 +23,8 @@ class OperatorDashboardUseCase {
     final devices = await devicesRepo.getAssignedToOperator(operatorId);
     final assignedDevices = devices.length;
 
-    final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
-    final todayReadings = await readingsRepo.countOperatorTodayReadings(operatorId, todayMidnight);
+    final businessDayStart = AppDateUtils.startOfCurrentBusinessDayUtcMs();
+    final todayReadings = await readingsRepo.countOperatorTodayReadings(operatorId, businessDayStart);
 
     return OperatorDashboardStats(
       assignedDevices: assignedDevices,

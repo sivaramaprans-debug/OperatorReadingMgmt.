@@ -23,19 +23,9 @@ class AdminDashboardScreen extends ConsumerWidget {
         title: const Text('Admin Dashboard'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.system_update_rounded),
-            tooltip: 'Check for Updates',
-            onPressed: () async {
-              final url = Uri.parse('https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/latest');
-              try {
-                await launchUrl(url, mode: LaunchMode.externalApplication);
-              } catch (_) {}
-            },
-          ),
-          IconButton(
-            tooltip: 'Logout',
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: () => ref.read(authNotifierProvider.notifier).logout(),
+            icon: const Icon(Icons.settings_rounded),
+            tooltip: 'Settings',
+            onPressed: () => context.push(RoutePaths.settings),
           ),
         ],
       ),

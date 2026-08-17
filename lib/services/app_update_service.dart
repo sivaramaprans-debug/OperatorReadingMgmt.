@@ -18,7 +18,7 @@ class AppUpdateInfo {
 }
 
 class AppUpdateService {
-  static const String currentVersion = '1.0.0';
+  static const String currentVersion = '1.2.0';
 
   Future<AppUpdateInfo?> checkForUpdates() async {
     try {

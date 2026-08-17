@@ -90,6 +90,34 @@ abstract final class AppDateUtils {
     return readingDate.isAfter(todayMidnight);
   }
 
+  // ── Business Day helpers ──────────────────────────────────────────────────
+
+  /// Returns the start of the current business day in local time, converted to UTC ms.
+  /// A business day starts at 8:00 AM.
+  static int startOfCurrentBusinessDayUtcMs() {
+    final now = DateTime.now();
+    final DateTime localStart;
+    if (now.hour < 8) {
+      localStart = DateTime(now.year, now.month, now.day - 1, 8, 0, 0);
+    } else {
+      localStart = DateTime(now.year, now.month, now.day, 8, 0, 0);
+    }
+    return localStart.toUtc().millisecondsSinceEpoch;
+  }
+
+  /// Converts a reading timestamp (ms) to the local midnight of its business day.
+  /// (e.g. any time between 20 Aug 8:00 AM and 21 Aug 8:00 AM maps to 20 Aug local midnight).
+  static int toBusinessDayMidnightUtcMs(int readingDateMs) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(readingDateMs, isUtc: true).toLocal();
+    final DateTime businessDay;
+    if (dt.hour < 8) {
+      businessDay = DateTime(dt.year, dt.month, dt.day - 1);
+    } else {
+      businessDay = DateTime(dt.year, dt.month, dt.day);
+    }
+    return businessDay.toUtc().millisecondsSinceEpoch;
+  }
+
   /// Returns a list of [DateTime] objects for the date-picker range (today going back [days] days).
   static List<DateTime> recentDays({int days = 30}) {
     final today = DateTime.now();

@@ -204,29 +204,29 @@ class SupabaseReadingsRepository {
     return (data as List).isNotEmpty;
   }
 
-  Future<int> countTodayReadings(int todayMidnightMs) async {
+  Future<int> countTodayReadings(int startMs) async {
     final data = await supabase
         .from(_table)
         .select('id')
-        .eq('reading_date', todayMidnightMs);
+        .gte('reading_date', startMs);
     return (data as List).length;
   }
 
-  Future<int> countTodayByType(int todayMidnightMs, String type) async {
+  Future<int> countTodayByType(int startMs, String type) async {
     final data = await supabase
         .from(_table)
         .select('id')
-        .eq('reading_date', todayMidnightMs)
+        .gte('reading_date', startMs)
         .eq('reading_type', type);
     return (data as List).length;
   }
 
-  Future<int> countOperatorTodayReadings(String operatorId, int todayMidnightMs) async {
+  Future<int> countOperatorTodayReadings(String operatorId, int startMs) async {
     final data = await supabase
         .from(_table)
         .select('id')
         .eq('operator_id', operatorId)
-        .eq('reading_date', todayMidnightMs);
+        .gte('reading_date', startMs);
     return (data as List).length;
   }
 

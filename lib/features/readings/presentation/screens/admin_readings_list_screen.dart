@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
+import '../../../../database/repositories/supabase_devices_repository.dart';
 import '../../../../database/supabase_providers.dart';
 import '../../../../routing/route_paths.dart';
 import '../../../../shared/widgets/empty_state_widget.dart';
@@ -168,7 +169,8 @@ class _DetailTab extends ConsumerWidget {
       children: [
         const _FilterBar(),
         Expanded(
-          child: readingsAsync.when(
+          child: SelectionArea(
+            child: readingsAsync.when(
             loading: () => const LoadingWidget(message: 'Searching readings...'),
             error: (err, stack) => ErrorStateWidget(
               message: 'Failed to search readings',
@@ -231,6 +233,7 @@ class _DetailTab extends ConsumerWidget {
             },
           ),
         ),
+      ),
       ],
     );
   }
@@ -246,13 +249,15 @@ class _SummaryTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Column(
       children: [
-        const _FilterBar(),
+        _FilterBar(readingType: readingType),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              AdminSummaryTable(readingType: readingType),
-            ],
+          child: SelectionArea(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                AdminSummaryTable(readingType: readingType),
+              ],
+            ),
           ),
         ),
       ],
@@ -263,7 +268,8 @@ class _SummaryTab extends ConsumerWidget {
 // ── Filter Bar ────────────────────────────────────────────────────────────────
 
 class _FilterBar extends ConsumerWidget {
-  const _FilterBar();
+  const _FilterBar({this.readingType});
+  final String? readingType;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -421,45 +427,57 @@ class _FilterBar extends ConsumerWidget {
           ),
 
           // Device multi-select chips
-          if (devicesAsync.value != null && devicesAsync.value!.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Text('Filter by Device', style: theme.textTheme.labelLarge),
-            ),
-            SizedBox(
-              height: 44,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                children: devicesAsync.value!.map((device) {
-                  final isSelected = filter.deviceIds.contains(device.id);
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      label: Text(device.name),
-                      selected: isSelected,
-                      onSelected: (selected) {
-                        final newIds = List<String>.from(filter.deviceIds);
-                        if (selected) {
-                          newIds.add(device.id);
-                        } else {
-                          newIds.remove(device.id);
-                        }
-                        ref.read(adminReadingsFilterProvider.notifier).state =
-                            AdminReadingsFilter(
-                          operatorId: filter.operatorId,
-                          deviceIds: newIds,
-                          readingType: filter.readingType,
-                          fromDateMs: filter.fromDateMs,
-                          toDateMs: filter.toDateMs,
-                        );
-                      },
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ],
+          Builder(builder: (context) {
+            var devices = devicesAsync.value ?? <SupabaseDevice>[];
+            if (readingType == 'heat') {
+              devices = devices.where((d) => d.requiresHeatDay).toList();
+            }
+            if (devices.isEmpty) return const SizedBox.shrink();
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Text('Filter by Device', style: theme.textTheme.labelLarge),
+                ),
+                SizedBox(
+                  height: 44,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    children: devices.map((device) {
+                      final isSelected = filter.deviceIds.contains(device.id);
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: FilterChip(
+                          label: Text(device.name),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            final newIds = List<String>.from(filter.deviceIds);
+                            if (selected) {
+                              newIds.add(device.id);
+                            } else {
+                              newIds.remove(device.id);
+                            }
+                            ref.read(adminReadingsFilterProvider.notifier).state =
+                                AdminReadingsFilter(
+                              operatorId: filter.operatorId,
+                              deviceIds: newIds,
+                              readingType: filter.readingType,
+                              fromDateMs: filter.fromDateMs,
+                              toDateMs: filter.toDateMs,
+                            );
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            );
+          }),
 
           const Divider(height: 1),
         ],

@@ -52,9 +52,10 @@ class OperatorReadingsListScreen extends ConsumerWidget {
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add Reading'),
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+      body: SelectionArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
           // Operator welcome header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -110,6 +111,7 @@ class OperatorReadingsListScreen extends ConsumerWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

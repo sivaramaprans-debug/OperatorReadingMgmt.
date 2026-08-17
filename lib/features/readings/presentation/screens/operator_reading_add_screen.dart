@@ -10,11 +10,41 @@ import '../../../../shared/widgets/form_container.dart';
 import '../../../../shared/widgets/snackbar_helper.dart';
 import '../../../../core/utils/app_date_utils.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../auth/presentation/notifiers/auth_notifier.dart';
 import '../notifiers/operator_readings_notifier.dart';
 import '../notifiers/reading_form_notifier.dart';
 import '../notifiers/previous_reading_provider.dart';
 import '../notifiers/heat_validation_provider.dart';
 import '../widgets/readings_calculated_table.dart';
+import '../../../../database/repositories/supabase_readings_repository.dart';
+import '../../../dashboard/presentation/notifiers/operator_dashboard_notifier.dart';
+import '../../../dashboard/presentation/notifiers/admin_dashboard_notifier.dart';
+
+/// Provider to load previous readings for all assigned devices in a specific category.
+final previousReadingsMapProvider = FutureProvider.autoDispose.family<Map<String, SupabaseReading>, String>((ref, category) async {
+  final operator = ref.watch(authNotifierProvider.notifier).currentUser;
+  if (operator == null) return {};
+
+  final devicesRepo = ref.read(supabaseDevicesRepoProvider);
+  final readingsRepo = ref.read(supabaseReadingsRepoProvider);
+
+  final allAssigned = await devicesRepo.getAssignedToOperator(operator.id);
+  final catDevices = allAssigned.where((d) => d.deviceCategory == category).toList();
+
+  final Map<String, SupabaseReading> results = {};
+  for (final d in catDevices) {
+    final prev = await readingsRepo.getPreviousReading(
+      deviceId: d.id,
+      readingType: 'day',
+      readingDateMs: AppDateUtils.nowUtcMs(),
+      heatNumber: '',
+    );
+    if (prev != null) {
+      results[d.id] = prev;
+    }
+  }
+  return results;
+});
 
 class OperatorReadingAddScreen extends ConsumerStatefulWidget {
   const OperatorReadingAddScreen({super.key});
@@ -27,12 +57,16 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
   String? _selectedDeviceId;
   String _readingType = 'day'; // 'heat' | 'day'
   final _heatNumberController = TextEditingController();
-  // Map of unit -> TextEditingController for dynamic unit fields
+  // Map of unit -> TextEditingController for dynamic unit fields in Energy tab
   final Map<String, TextEditingController> _unitControllers = {};
-  // Track current device to know when to reset controllers
+  // Track current device to know when to reset controllers in Energy tab
   SupabaseDevice? _currentDevice;
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
+
+  // Map of deviceId -> TextEditingController for batch entry tabs (Pollution, Water)
+  final Map<String, TextEditingController> _batchControllers = {};
+  bool _isSubmittingBatch = false;
 
   @override
   void initState() {
@@ -48,7 +82,14 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
     for (final c in _unitControllers.values) {
       c.dispose();
     }
+    for (final c in _batchControllers.values) {
+      c.dispose();
+    }
     super.dispose();
+  }
+
+  TextEditingController _getBatchController(String deviceId) {
+    return _batchControllers.putIfAbsent(deviceId, () => TextEditingController());
   }
 
   void _setupControllersForDevice(SupabaseDevice device) {
@@ -58,7 +99,6 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
       c.dispose();
     }
     _unitControllers.clear();
-    // Create new controllers for each unit in the device matrix
     // Create new controllers for each unit in both device matrices
     final heatUnits = device.matrix.isEmpty
         ? <String>[]
@@ -70,7 +110,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
     for (final unit in allUnits) {
       _unitControllers[unit] = TextEditingController();
     }
-    // Reset reading type — default to 'day'; if device requires heat/day the operator picks.
+    // Reset reading type
     _readingType = device.requiresHeatDay ? 'heat' : 'day';
     _heatNumberController.clear();
     _currentDevice = device;
@@ -98,8 +138,6 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
 
     // Collect all unit values
     final Map<String, double> values = {};
-    // Determine which matrix to read from based on the reading type.
-    // If the device doesn't have heat/day toggle, always use day units.
     final currentUnits = _readingType == 'heat' && device.requiresHeatDay
         ? (device.matrix.isEmpty ? [] : device.matrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList())
         : (device.dayMatrix.isEmpty ? [] : device.dayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList());
@@ -120,8 +158,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
       return;
     }
 
-    // ── Power Factor (PF) Validation ──────────────────────────────────────
-    // 1. Direct PF matrix unit check
+    // Power Factor validation checks
     final directPfKey = values.keys.firstWhere((k) => k.toUpperCase() == 'PF', orElse: () => '');
     if (directPfKey.isNotEmpty && (values[directPfKey] ?? 0) > 1.0) {
       if (!mounted) return;
@@ -149,7 +186,6 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
       return;
     }
 
-    // 2. Dynamic PF calculation from consumption (KWH Consumption / KVAH Consumption)
     final kwhKey = values.keys.firstWhere((k) => k.toUpperCase() == 'KWH', orElse: () => '');
     final kvahKey = values.keys.firstWhere((k) => k.toUpperCase() == 'KVAH', orElse: () => '');
 
@@ -251,353 +287,580 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final formState = ref.watch(readingFormNotifierProvider);
-    final devicesAsync = ref.watch(assignedActiveDevicesProvider);
-    final theme = Theme.of(context);
+  Future<void> _onSubmitBatch(List<SupabaseDevice> devices, String category) async {
+    final user = ref.read(authNotifierProvider.notifier).currentUser;
+    if (user == null) return;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Add Reading')),
-      body: devicesAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error loading devices: $e')),
-        data: (devices) {
-          if (devices.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
+    final List<({SupabaseDevice device, double value, String unitKey})> entries = [];
+    for (final d in devices) {
+      final controller = _batchControllers[d.id];
+      if (controller == null) continue;
+      final text = controller.text.trim();
+      if (text.isEmpty) continue;
+
+      final parsed = double.tryParse(text);
+      if (parsed == null) {
+        SnackbarHelper.showError(context, 'Please enter a valid number for ${d.name}.');
+        return;
+      }
+      if (parsed < 0) {
+        SnackbarHelper.showError(context, 'Readings cannot be negative (${d.name}).');
+        return;
+      }
+      final unitKey = d.singleMetric.isNotEmpty ? d.singleMetric : (d.dayMatrix.split(',').firstOrNull?.trim() ?? 'KWH');
+      entries.add((device: d, value: parsed, unitKey: unitKey));
+    }
+
+    if (entries.isEmpty) {
+      SnackbarHelper.showError(context, 'Please enter at least one reading.');
+      return;
+    }
+
+    setState(() {
+      _isSubmittingBatch = true;
+    });
+
+    final useCase = ref.read(addReadingUseCaseProvider);
+    final nowMs = AppDateUtils.nowUtcMs();
+    int successCount = 0;
+    List<String> errors = [];
+
+    for (final entry in entries) {
+      final (_, failure) = await useCase.call(
+        operatorId: user.id,
+        deviceId: entry.device.id,
+        readingType: 'day',
+        heatNumber: '',
+        values: {entry.unitKey: entry.value},
+        readingDate: nowMs,
+      );
+      if (failure != null) {
+        errors.add('${entry.device.name}: ${failure.message}');
+      } else {
+        successCount++;
+      }
+    }
+
+    setState(() {
+      _isSubmittingBatch = false;
+    });
+
+    if (!mounted) return;
+
+    if (errors.isNotEmpty) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Batch Submission Results'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Successfully added $successCount readings.', style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                const Text('Errors:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                ...errors.map((e) => Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('• $e', style: const TextStyle(fontSize: 12, color: Colors.red)),
+                )),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                if (successCount > 0) {
+                  ref.invalidate(operatorDashboardStatsProvider);
+                  ref.invalidate(adminDashboardStatsProvider);
+                  ref.invalidate(previousReadingsMapProvider(category));
+                  context.pop();
+                }
+              },
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      SnackbarHelper.showSuccess(context, 'Successfully added all $successCount readings.');
+      ref.invalidate(operatorDashboardStatsProvider);
+      ref.invalidate(adminDashboardStatsProvider);
+      ref.invalidate(previousReadingsMapProvider(category));
+      context.pop();
+    }
+  }
+
+  Widget _buildEnergyTab(List<SupabaseDevice> allDevices, ThemeData theme, ReadingFormState formState) {
+    final devices = allDevices.where((d) => d.isEnergy || d.requiresHeatDay).toList();
+    if (devices.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text('No Energy devices assigned to you.', textAlign: TextAlign.center),
+        ),
+      );
+    }
+
+    _selectedDeviceId ??= devices.first.id;
+    final selectedDevice = devices.firstWhere(
+      (d) => d.id == _selectedDeviceId,
+      orElse: () => devices.first,
+    );
+
+    // Setup controllers
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _currentDevice?.id != selectedDevice.id) {
+        setState(() {
+          _setupControllersForDevice(selectedDevice);
+        });
+      }
+    });
+    if (_currentDevice == null) {
+      _setupControllersForDevice(selectedDevice);
+    }
+
+    final heatUnits = selectedDevice.matrix.isEmpty
+        ? <String>[]
+        : selectedDevice.matrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    final dayUnits = selectedDevice.dayMatrix.isEmpty
+        ? <String>[]
+        : selectedDevice.dayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
+    final currentUnits = _readingType == 'heat' && selectedDevice.requiresHeatDay ? heatUnits : dayUnits;
+    final heatFactors = parseFactorMap(selectedDevice.heatUnitFactors);
+    final dayFactors = parseFactorMap(selectedDevice.dayUnitFactors);
+    final currentFactors = _readingType == 'heat' && selectedDevice.requiresHeatDay ? heatFactors : dayFactors;
+
+    final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
+    final prevReadingAsync = ref.watch(previousReadingProvider((
+      deviceId: selectedDevice.id,
+      readingType: _readingType,
+      readingDateMs: todayMidnight,
+      heatNumber: _heatNumberController.text,
+    )));
+
+    Map<String, double> prevValues = {};
+    if (prevReadingAsync.value != null) {
+      try {
+        final decoded = jsonDecode(prevReadingAsync.value!.readingValues) as Map<String, dynamic>;
+        prevValues = decoded.map((k, v) => MapEntry(k, (v as num).toDouble()));
+      } catch (_) {}
+    }
+
+    return FormContainer(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButtonFormField<String>(
+              value: _selectedDeviceId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Device',
+                prefixIcon: Icon(Icons.settings_input_component_outlined),
+              ),
+              items: devices.map((d) => DropdownMenuItem(
+                value: d.id,
+                child: Text(d.name, overflow: TextOverflow.ellipsis),
+              )).toList(),
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() {
+                  _selectedDeviceId = val;
+                  final newDevice = devices.firstWhere((d) => d.id == val);
+                  _setupControllersForDevice(newDevice);
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Date & Time selection
+            Row(
+              children: [
+                Expanded(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.calendar_today_rounded),
+                    title: const Text('Date'),
+                    subtitle: Text(DateFormat('dd MMM yyyy').format(_selectedDate)),
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: _selectedDate,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime(2101),
+                      );
+                      if (picked != null) {
+                        setState(() => _selectedDate = picked);
+                      }
+                    },
+                  ),
+                ),
+                Expanded(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.access_time_rounded),
+                    title: const Text('Time'),
+                    subtitle: Text(_selectedTime.format(context)),
+                    onTap: () async {
+                      final picked = await showTimePicker(
+                        context: context,
+                        initialTime: _selectedTime,
+                      );
+                      if (picked != null) {
+                        setState(() => _selectedTime = picked);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const Divider(),
+            const SizedBox(height: 16),
+
+            if (currentUnits.isNotEmpty) ...[
+              Text('${_readingType == 'heat' && selectedDevice.requiresHeatDay ? 'Heat' : 'Day'} Units', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                children: currentUnits.map((u) => Chip(
+                  label: Text(u, style: const TextStyle(fontSize: 12)),
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                )).toList(),
+              ),
+              const SizedBox(height: 20),
+            ] else ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
                 child: Text(
-                  'No devices assigned to you.\nContact your administrator.',
-                  textAlign: TextAlign.center,
+                  'No matrix units assigned to this device. Contact admin.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
                 ),
               ),
-            );
-          }
+              const SizedBox(height: 20),
+            ],
 
-          // Auto-select first device if none selected
-          _selectedDeviceId ??= devices.first.id;
-          final selectedDevice = devices.firstWhere(
-            (d) => d.id == _selectedDeviceId,
-            orElse: () => devices.first,
-          );
-
-          // Setup controllers for the selected device
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && _currentDevice?.id != selectedDevice.id) {
-              setState(() {
-                _setupControllersForDevice(selectedDevice);
-              });
-            }
-          });
-          if (_currentDevice == null) {
-            _setupControllersForDevice(selectedDevice);
-          }
-
-          final heatUnits = selectedDevice.matrix.isEmpty
-              ? <String>[]
-              : selectedDevice.matrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-          final dayUnits = selectedDevice.dayMatrix.isEmpty
-              ? <String>[]
-              : selectedDevice.dayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-
-          // Use heat units only when device requires heat/day AND current type is heat.
-          // Otherwise always use day units (including when heat/day toggle is disabled).
-          final currentUnits = _readingType == 'heat' && selectedDevice.requiresHeatDay ? heatUnits : dayUnits;
-          
-          final heatFactors = parseFactorMap(selectedDevice.heatUnitFactors);
-          final dayFactors = parseFactorMap(selectedDevice.dayUnitFactors);
-          final currentFactors = _readingType == 'heat' && selectedDevice.requiresHeatDay ? heatFactors : dayFactors;
-          
-          final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
-          final prevReadingAsync = ref.watch(previousReadingProvider((
-            deviceId: selectedDevice.id,
-            readingType: _readingType,
-            readingDateMs: todayMidnight,
-            heatNumber: _heatNumberController.text,
-          )));
-          
-          Map<String, double> prevValues = {};
-          if (prevReadingAsync.value != null) {
-            try {
-              final decoded = jsonDecode(prevReadingAsync.value!.readingValues) as Map<String, dynamic>;
-              prevValues = decoded.map((k, v) => MapEntry(k, (v as num).toDouble()));
-            } catch (_) {}
-          }
-
-          return FormContainer(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+            if (selectedDevice.requiresHeatDay) ...[
+              Text('Reading Type', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              Row(
                 children: [
-                  // ── Device Selector grouped by category ─────────────
-                  Builder(builder: (context) {
-                    // Build grouped dropdown items
-                    final energyDevices    = devices.where((d) => d.isEnergy).toList();
-                    final dedDevices       = devices.where((d) => d.isDedusting).toList();
-                    final waterDevices     = devices.where((d) => d.isWater).toList();
-
-                    DropdownMenuItem<String> devItem(SupabaseDevice d) =>
-                        DropdownMenuItem(
-                          value: d.id,
-                          child: Text(d.name, overflow: TextOverflow.ellipsis),
-                        );
-
-                    DropdownMenuItem<String> sectionHeader(String label, IconData icon, Color color) =>
-                        DropdownMenuItem<String>(
-                          enabled: false,
-                          value: '__header_$label',
-                          child: Row(children: [
-                            Icon(icon, size: 14, color: color),
-                            const SizedBox(width: 6),
-                            Text(label,
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: color)),
-                          ]),
-                        );
-
-                    final allItems = <DropdownMenuItem<String>>[
-                      if (energyDevices.isNotEmpty) ...[
-                        sectionHeader('⚡ Energy Devices',
-                            Icons.bolt_rounded, theme.colorScheme.primary),
-                        ...energyDevices.map(devItem),
-                      ],
-                      if (dedDevices.isNotEmpty) ...[
-                        sectionHeader('🌀 Dedusting Equipment',
-                            Icons.air_rounded, AppColors.secondary),
-                        ...dedDevices.map(devItem),
-                      ],
-                      if (waterDevices.isNotEmpty) ...[
-                        sectionHeader('💧 Water Meters',
-                            Icons.water_drop_rounded, Colors.blue),
-                        ...waterDevices.map(devItem),
-                      ],
-                    ];
-
-                    return DropdownButtonFormField<String>(
-                      value: _selectedDeviceId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Device',
-                        prefixIcon: Icon(Icons.settings_input_component_outlined),
-                      ),
-                      items: allItems,
-                      onChanged: (val) {
-                        if (val == null || val.startsWith('__header_')) return;
-                        setState(() {
-                          _selectedDeviceId = val;
-                          final newDevice =
-                              devices.firstWhere((d) => d.id == val);
-                          _setupControllersForDevice(newDevice);
-                        });
-                      },
-                    );
-                  }),
-                  const SizedBox(height: 16),
-
-
-                  // Date & Time selection
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.calendar_today_rounded),
-                          title: const Text('Date'),
-                          subtitle: Text(DateFormat('dd MMM yyyy').format(_selectedDate)),
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: _selectedDate,
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime(2101),
-                            );
-                            if (picked != null) {
-                              setState(() => _selectedDate = picked);
-                            }
-                          },
-                        ),
-                      ),
-                      Expanded(
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.access_time_rounded),
-                          title: const Text('Time'),
-                          subtitle: Text(_selectedTime.format(context)),
-                          onTap: () async {
-                            final picked = await showTimePicker(
-                              context: context,
-                              initialTime: _selectedTime,
-                            );
-                            if (picked != null) {
-                              setState(() => _selectedTime = picked);
-                            }
-                          },
-                        ),
-                      ),
-                    ],
+                  Expanded(
+                    child: RadioListTile<String>(
+                      title: const Text('Heat'),
+                      value: 'heat',
+                      groupValue: _readingType,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (val) => setState(() => _readingType = val!),
+                    ),
                   ),
-                  const Divider(),
-                  const SizedBox(height: 16),
-
-                  // Matrix info chip
-                  if (currentUnits.isNotEmpty) ...[
-                    Text('${_readingType == 'heat' && selectedDevice.requiresHeatDay ? 'Heat' : 'Day'} Units', style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      children: currentUnits.map((u) => Chip(
-                        label: Text(u, style: const TextStyle(fontSize: 12)),
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      )).toList(),
+                  Expanded(
+                    child: RadioListTile<String>(
+                      title: const Text('Day'),
+                      value: 'day',
+                      groupValue: _readingType,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (val) => setState(() => _readingType = val!),
                     ),
-                    const SizedBox(height: 20),
-                  ] else ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.errorContainer.withOpacity(0.3),
-                        borderRadius: BorderRadius.circular(8),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_readingType == 'heat') ...[
+                TextField(
+                  controller: _heatNumberController,
+                  decoration: const InputDecoration(
+                    labelText: 'Heat Number',
+                    prefixIcon: Icon(Icons.tag_rounded),
+                  ),
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                ),
+                _HeatHintWidget(
+                  deviceId: selectedDevice.id,
+                  heatNumberController: _heatNumberController,
+                ),
+                const SizedBox(height: 20),
+              ],
+            ],
+
+            ...currentUnits.map((unit) {
+              final controller = _unitControllers[unit] ?? TextEditingController();
+              final prevVal = prevValues[unit];
+              final mf = currentFactors[unit] ?? 1.0;
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      decoration: InputDecoration(
+                        labelText: unit,
+                        prefixIcon: const Icon(Icons.electric_meter_outlined),
+                        suffixText: unit,
                       ),
-                      child: Text(
-                        'No matrix units assigned to this device. Contact admin.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.error,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      textInputAction: TextInputAction.next,
+                    ),
+                    if (prevVal != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, left: 12),
+                        child: ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: controller,
+                          builder: (context, value, child) {
+                            final currentVal = double.tryParse(value.text.trim());
+                            if (currentVal == null) {
+                              return Text('Prev: ${prevVal.toStringAsFixed(2)}',
+                                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
+                            }
+                            final diff = currentVal - prevVal;
+                            final consump = diff * mf;
+
+                            final Color diffColor = diff < 0 ? theme.colorScheme.error : theme.colorScheme.primary;
+                            return Row(
+                              children: [
+                                Text('Prev: ${prevVal.toStringAsFixed(2)}  |  ',
+                                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                                Text('Diff: ${diff.toStringAsFixed(2)}',
+                                    style: theme.textTheme.bodySmall?.copyWith(color: diffColor, fontWeight: FontWeight.bold)),
+                                Text('  |  Consump: ${consump.toStringAsFixed(2)}',
+                                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)),
+                              ],
+                            );
+                          },
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
                   ],
+                ),
+              );
+            }),
 
-                  // Heat / Day selection (only for devices that require it)
-                  if (selectedDevice.requiresHeatDay) ...[
-                    Text('Reading Type', style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: RadioListTile<String>(
-                            title: const Text('Heat'),
-                            value: 'heat',
-                            groupValue: _readingType,
-                            contentPadding: EdgeInsets.zero,
-                            onChanged: (val) => setState(() => _readingType = val!),
-                          ),
-                        ),
-                        Expanded(
-                          child: RadioListTile<String>(
-                            title: const Text('Day'),
-                            value: 'day',
-                            groupValue: _readingType,
-                            contentPadding: EdgeInsets.zero,
-                            onChanged: (val) => setState(() => _readingType = val!),
-                          ),
-                        ),
-                      ],
+            _LivePowerFactorWidget(
+              unitControllers: _unitControllers,
+              prevValues: prevValues,
+              currentFactors: currentFactors,
+            ),
+            const SizedBox(height: 8),
+
+            AppButton(
+              label: 'Submit Reading',
+              isLoading: formState.isLoading,
+              onPressed: currentUnits.isEmpty ? null : () => _onSubmit(selectedDevice),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBatchEntryTab(List<SupabaseDevice> allDevices, String category, ThemeData theme) {
+    final devices = allDevices.where((d) => d.deviceCategory == category).toList();
+    if (devices.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text('No ${DeviceCategory.label(category)} devices assigned to you.', textAlign: TextAlign.center),
+        ),
+      );
+    }
+
+    final prevReadingsAsync = ref.watch(previousReadingsMapProvider(category));
+
+    return prevReadingsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Error loading previous readings: $e')),
+      data: (prevMap) {
+        return Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: devices.length,
+                itemBuilder: (context, index) {
+                  final d = devices[index];
+                  final controller = _getBatchController(d.id);
+                  final unitKey = d.singleMetric.isNotEmpty ? d.singleMetric : (d.dayMatrix.split(',').firstOrNull?.trim() ?? 'KWH');
+                  final factors = parseFactorMap(d.dayUnitFactors);
+                  final mf = factors[unitKey] ?? d.multiplicationFactor;
+
+                  double? prevVal;
+                  final prevReading = prevMap[d.id];
+                  if (prevReading != null) {
+                    try {
+                      final decoded = jsonDecode(prevReading.readingValues) as Map<String, dynamic>;
+                      prevVal = (decoded[unitKey] ?? decoded.values.firstOrNull) as double?;
+                    } catch (_) {}
+                  }
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
                     ),
-                    const SizedBox(height: 8),
-                    if (_readingType == 'heat') ...[
-                      TextField(
-                        controller: _heatNumberController,
-                        decoration: const InputDecoration(
-                          labelText: 'Heat Number',
-                          prefixIcon: Icon(Icons.tag_rounded),
-                        ),
-                        keyboardType: TextInputType.number,
-                        textInputAction: TextInputAction.next,
-                      ),
-                      _HeatHintWidget(
-                        deviceId: selectedDevice.id,
-                        heatNumberController: _heatNumberController,
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ],
-
-                  // Dynamic unit value fields
-                  ...currentUnits.map((unit) {
-                    final controller = _unitControllers[unit] ?? TextEditingController();
-                    final prevVal = prevValues[unit];
-                    final mf = currentFactors[unit] ?? 1.0;
-                    
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
+                    elevation: 0,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Row(
+                            children: [
+                              Icon(
+                                category == DeviceCategory.water ? Icons.water_drop_rounded : Icons.air_rounded,
+                                color: category == DeviceCategory.water ? Colors.blue : AppColors.secondary,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  d.name,
+                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              if (mf != 1.0)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.secondaryContainer,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    'MF: ${NumberFormat('#,##0.##').format(mf)}',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: theme.colorScheme.onSecondaryContainer,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
                           TextField(
                             controller: controller,
                             decoration: InputDecoration(
-                              labelText: unit,
-                              prefixIcon: const Icon(Icons.electric_meter_outlined),
-                              suffixText: unit,
+                              labelText: 'Current Reading ($unitKey)',
+                              prefixIcon: const Icon(Icons.speed_rounded),
+                              suffixText: unitKey,
                             ),
                             keyboardType: const TextInputType.numberWithOptions(decimal: true),
                             textInputAction: TextInputAction.next,
                           ),
-                          if (prevVal != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4, left: 12),
-                              child: ValueListenableBuilder<TextEditingValue>(
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                'Previous: ${prevVal != null ? NumberFormat('#,##0.##').format(prevVal) : '—'}',
+                                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                              ),
+                              const Spacer(),
+                              ValueListenableBuilder<TextEditingValue>(
                                 valueListenable: controller,
                                 builder: (context, value, child) {
                                   final currentVal = double.tryParse(value.text.trim());
-                                  if (currentVal == null) {
-                                    return Text('Prev: ${prevVal.toStringAsFixed(2)}', 
-                                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
+                                  if (currentVal == null || prevVal == null) {
+                                    return const SizedBox.shrink();
                                   }
                                   final diff = currentVal - prevVal;
                                   final consump = diff * mf;
-                                  
-                                  final Color diffColor = diff < 0 ? theme.colorScheme.error : theme.colorScheme.primary;
+                                  final displayUnit = category == DeviceCategory.water ? 'Litres' : 'KWH';
+
                                   return Row(
+                                    mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Text('Prev: ${prevVal.toStringAsFixed(2)}  |  ', 
-                                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                                      Text('Diff: ${diff.toStringAsFixed(2)}', 
-                                        style: theme.textTheme.bodySmall?.copyWith(color: diffColor, fontWeight: FontWeight.bold)),
-                                      Text('  |  Consump: ${consump.toStringAsFixed(2)}', 
-                                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)),
+                                      Text(
+                                        'Diff: ${diff.toStringAsFixed(2)}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: diff < 0 ? theme.colorScheme.error : theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '| Cons: ${NumberFormat('#,##0.##').format(consump)} $displayUnit',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
                                     ],
                                   );
                                 },
                               ),
-                            ),
+                            ],
+                          ),
                         ],
                       ),
-                    );
-                  }),
-
-                  // Live Power Factor (PF) Appearance & Validation Banner
-                  _LivePowerFactorWidget(
-                    unitControllers: _unitControllers,
-                    prevValues: prevValues,
-                    currentFactors: currentFactors,
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  AppButton(
-                    label: 'Submit Reading',
-                    isLoading: formState.isLoading,
-                    onPressed: currentUnits.isEmpty ? null : () => _onSubmit(selectedDevice),
-                  ),
-                ],
+                    ),
+                  );
+                },
               ),
             ),
-          );
-        },
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: AppButton(
+                  label: 'Submit All Readings',
+                  isLoading: _isSubmittingBatch,
+                  onPressed: () => _onSubmitBatch(devices, category),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final formState = ref.watch(readingFormNotifierProvider);
+    final devicesAsync = ref.watch(assignedActiveDevicesProvider);
+
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Add Reading'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.bolt_rounded), text: 'Energy'),
+              Tab(icon: Icon(Icons.air_rounded), text: 'Pollution'),
+              Tab(icon: Icon(Icons.water_drop_rounded), text: 'Water'),
+            ],
+          ),
+        ),
+        body: devicesAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (e, _) => Center(child: Text('Error loading devices: $e')),
+          data: (devices) {
+            return TabBarView(
+              children: [
+                _buildEnergyTab(devices, Theme.of(context), formState),
+                _buildBatchEntryTab(devices, DeviceCategory.dedusting, Theme.of(context)),
+                _buildBatchEntryTab(devices, DeviceCategory.water, Theme.of(context)),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 }
 
 /// Standalone widget for real-time heat number validation hint.
-/// Extracted to avoid DDC compiler crash with complex nested closures.
 class _HeatHintWidget extends ConsumerStatefulWidget {
   const _HeatHintWidget({
     required this.deviceId,
@@ -652,22 +915,17 @@ class _HeatHintWidgetState extends ConsumerState<_HeatHintWidget> {
         ),
         error: (_, __) => const SizedBox.shrink(),
         data: (result) {
-          // Empty field — show static "expected next" hint
           if (heatText.isEmpty) {
             return Text(
               'Enter the next heat number. A new cycle must start from Heat #1.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             );
           }
 
-          // Valid
           if (result.isValid) {
             return Row(
               children: [
-                Icon(Icons.check_circle_outline,
-                    size: 14, color: theme.colorScheme.primary),
+                Icon(Icons.check_circle_outline, size: 14, color: theme.colorScheme.primary),
                 const SizedBox(width: 4),
                 Text(
                   'Heat #$heatText is valid ✓',
@@ -680,12 +938,10 @@ class _HeatHintWidgetState extends ConsumerState<_HeatHintWidget> {
             );
           }
 
-          // Invalid
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.error_outline,
-                  size: 14, color: theme.colorScheme.error),
+              Icon(Icons.error_outline, size: 14, color: theme.colorScheme.error),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
@@ -778,9 +1034,7 @@ class _LivePowerFactorWidget extends StatelessWidget {
 
         final isInvalid = activePf > 1.0;
 
-        final bgColor = isInvalid
-            ? Colors.red.shade50
-            : const Color(0xFFE8F5E9);
+        final bgColor = isInvalid ? Colors.red.shade50 : const Color(0xFFE8F5E9);
         final borderColor = isInvalid ? Colors.red.shade400 : Colors.teal.shade400;
         final textColor = isInvalid ? Colors.red.shade900 : Colors.teal.shade900;
         final icon = isInvalid ? Icons.warning_amber_rounded : Icons.check_circle_rounded;

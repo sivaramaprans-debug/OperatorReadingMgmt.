@@ -183,9 +183,10 @@ class ReadingsCalculatedTable extends ConsumerWidget {
     final headerBg = theme.colorScheme.surfaceContainerHighest.withOpacity(0.5);
     final unitHeaderBg = AppColors.primaryContainer.withOpacity(0.35);
 
-    return Builder(
-      builder: (context) {
-        final scrollController = ScrollController();
+    return SelectionArea(
+      child: Builder(
+        builder: (context) {
+          final scrollController = ScrollController();
         return Scrollbar(
           controller: scrollController,
           thumbVisibility: true,
@@ -478,13 +479,14 @@ class ReadingsCalculatedTable extends ConsumerWidget {
               ],
             );
           }),
-            ],
-          ),
-        ),
+        ],
+      ),
+    ),
       );
     },
-  );
-  }
+  ),
+);
+}
 }
 
 /// Helper to parse a JSON factor map string to Map<String, double>.

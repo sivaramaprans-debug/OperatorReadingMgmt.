@@ -30,8 +30,8 @@ class AdminDashboardUseCase {
     final devices = await devicesRepo.getAll();
     final activeDevices = devices.length;
 
-    final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
-    final todayReadings = await readingsRepo.countTodayReadings(todayMidnight);
+    final businessDayStart = AppDateUtils.startOfCurrentBusinessDayUtcMs();
+    final todayReadings = await readingsRepo.countTodayReadings(businessDayStart);
 
     return AdminDashboardStats(
       totalOperators: totalOperators,

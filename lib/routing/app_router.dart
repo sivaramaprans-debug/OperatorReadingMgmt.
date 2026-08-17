@@ -25,6 +25,7 @@ import '../features/readings/presentation/screens/admin_reading_edit_screen.dart
 import '../features/audit/presentation/screens/admin_audit_logs_screen.dart';
 import '../features/readings/presentation/screens/dedusting_readings_screen.dart';
 import '../features/readings/presentation/screens/water_readings_screen.dart';
+import '../features/settings/presentation/screens/settings_screen.dart';
 import '../database/repositories/supabase_operators_repository.dart';
 import '../database/repositories/supabase_devices_repository.dart';
 import '../database/repositories/supabase_readings_repository.dart';
@@ -279,6 +280,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           context,
           state,
           const WaterReadingsScreen(),
+        ),
+      ),
+
+      GoRoute(
+        path: RoutePaths.settings,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const SettingsScreen(),
         ),
       ),
 

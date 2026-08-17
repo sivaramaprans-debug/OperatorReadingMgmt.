@@ -32,6 +32,9 @@ abstract final class RoutePaths {
   static const String operatorReadingEdit = '/operator/readings/:id/edit';
   static const String operatorChangePassword = '/operator/change-password';
 
+  // Settings
+  static const String settings = '/settings';
+
   // Helpers — build concrete paths with IDs
   static String adminOperatorDetailPath(String id) =>
       '/admin/operators/$id';
