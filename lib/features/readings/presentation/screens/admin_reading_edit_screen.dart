@@ -13,6 +13,7 @@ import '../../../../shared/widgets/form_container.dart';
 import '../../../../shared/widgets/snackbar_helper.dart';
 import '../notifiers/admin_readings_notifier.dart';
 import '../notifiers/admin_reading_form_notifier.dart';
+import '../notifiers/previous_reading_provider.dart';
 import '../widgets/live_power_factor_widget.dart';
 
 class AdminReadingEditScreen extends ConsumerStatefulWidget {
@@ -104,9 +105,11 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
           _unitControllers.clear();
           final allUnits = {..._heatUnits, ..._dayUnits};
           for (final unit in allUnits) {
-            _unitControllers[unit] = TextEditingController(
+            final controller = TextEditingController(
               text: existingValues.containsKey(unit) ? existingValues[unit]!.toStringAsFixed(2) : '',
             );
+            controller.addListener(_onUnitValuesChanged);
+            _unitControllers[unit] = controller;
           }
         }
       });
@@ -217,6 +220,40 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
     
     final devicesAsync = ref.watch(allDevicesProvider);
     final operatorsAsync = ref.watch(allOperatorsProvider);
+
+    final selectedDateTime = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    );
+    final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
+
+    final prevReadingAsync = ref.watch(previousReadingProvider((
+      deviceId: _selectedDeviceId ?? '',
+      readingType: _readingType,
+      readingDateMs: readingDateMs,
+      heatNumber: _heatNumberController.text,
+    )));
+
+    Map<String, double> prevValues = {};
+    if (prevReadingAsync.value != null) {
+      try {
+        final decoded = jsonDecode(prevReadingAsync.value!.readingValues) as Map<String, dynamic>;
+        prevValues = decoded.map((k, v) => MapEntry(k, (v as num).toDouble()));
+      } catch (_) {}
+    }
+
+    final heatFactors = parseFactorMap(_device?.heatUnitFactors ?? '{}');
+    final dayFactors = parseFactorMap(_device?.dayUnitFactors ?? '{}');
+    final currentFactors = _readingType == 'heat' && (_device?.requiresHeatDay ?? false) ? heatFactors : dayFactors;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onUnitValuesChanged();
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(title: Text(isEdit ? 'Edit Reading (Admin)' : 'Add Reading')),
@@ -351,17 +388,59 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
                       // Dynamic per-unit fields
                       ...(_readingType == 'heat' && _device!.requiresHeatDay ? _heatUnits : _dayUnits).map((unit) {
                         final controller = _unitControllers[unit] ?? TextEditingController();
+                        final prevVal = prevValues[unit];
+                        final mf = currentFactors[unit] ?? 1.0;
+                        final isCumulative = _isCumulativeUnit(unit);
+                        final isPfField = unit.toUpperCase() == 'PF';
+                        final hasKwhAndKvah = _unitControllers.keys.any((k) => k.toUpperCase() == 'KWH') &&
+                            _unitControllers.keys.any((k) => k.toUpperCase() == 'KVAH');
+
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 16),
-                          child: TextField(
-                            controller: controller,
-                            decoration: InputDecoration(
-                              labelText: unit,
-                              prefixIcon: const Icon(Icons.electric_meter_outlined),
-                              suffixText: unit,
-                            ),
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            textInputAction: TextInputAction.next,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TextField(
+                                controller: controller,
+                                readOnly: isPfField && hasKwhAndKvah,
+                                decoration: InputDecoration(
+                                  labelText: unit,
+                                  prefixIcon: const Icon(Icons.electric_meter_outlined),
+                                  suffixText: unit,
+                                  filled: isPfField && hasKwhAndKvah,
+                                ),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                textInputAction: TextInputAction.next,
+                              ),
+                              if (prevVal != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4, left: 12),
+                                  child: ValueListenableBuilder<TextEditingValue>(
+                                    valueListenable: controller,
+                                    builder: (context, value, child) {
+                                      final currentVal = double.tryParse(value.text.trim());
+                                      if (currentVal == null || !isCumulative) {
+                                        return Text('Prev: ${prevVal.toStringAsFixed(2)}',
+                                            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant));
+                                      }
+                                      final diff = currentVal - prevVal;
+                                      final consump = diff * mf;
+
+                                      final Color diffColor = diff < 0 ? Theme.of(context).colorScheme.error : Theme.of(context).colorScheme.primary;
+                                      return Row(
+                                        children: [
+                                          Text('Prev: ${prevVal.toStringAsFixed(2)}  |  ',
+                                              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                          Text('Diff: ${diff.toStringAsFixed(2)}',
+                                              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: diffColor, fontWeight: FontWeight.bold)),
+                                          Text('  |  Consump: ${consump.toStringAsFixed(2)}',
+                                              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary)),
+                                        ],
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
                           ),
                         );
                       }),
@@ -374,8 +453,8 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
                     if (_device != null)
                       LivePowerFactorWidget(
                         unitControllers: _unitControllers,
-                        prevValues: const {},
-                        currentFactors: const {},
+                        prevValues: prevValues,
+                        currentFactors: currentFactors,
                       ),
 
                     AppButton(
@@ -388,5 +467,85 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
               ),
       ),
     );
+  }
+
+  void _onUnitValuesChanged() {
+    final kwhKey = _unitControllers.keys.firstWhere((k) => k.toUpperCase() == 'KWH', orElse: () => '');
+    final kvahKey = _unitControllers.keys.firstWhere((k) => k.toUpperCase() == 'KVAH', orElse: () => '');
+    final pfKey = _unitControllers.keys.firstWhere((k) => k.toUpperCase() == 'PF', orElse: () => '');
+
+    if (kwhKey.isNotEmpty && kvahKey.isNotEmpty && pfKey.isNotEmpty) {
+      final kwhCtrl = _unitControllers[kwhKey]!;
+      final kvahCtrl = _unitControllers[kvahKey]!;
+      final pfCtrl = _unitControllers[pfKey]!;
+
+      final currentKwh = double.tryParse(kwhCtrl.text.trim());
+      final currentKvah = double.tryParse(kvahCtrl.text.trim());
+
+      final selectedDateTime = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+        _selectedTime.hour,
+        _selectedTime.minute,
+      );
+      final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
+
+      final prevReading = ref.read(previousReadingProvider((
+        deviceId: _selectedDeviceId ?? '',
+        readingType: _readingType,
+        readingDateMs: readingDateMs,
+        heatNumber: _heatNumberController.text,
+      ))).value;
+
+      if (prevReading != null && currentKwh != null && currentKvah != null) {
+        try {
+          final prevMap = jsonDecode(prevReading.readingValues) as Map<String, dynamic>;
+          final prevKwh = (prevMap[kwhKey] ?? prevMap['KWH'] ?? prevMap['kwh']) as num?;
+          final prevKvah = (prevMap[kvahKey] ?? prevMap['KVAH'] ?? prevMap['kvah']) as num?;
+
+          if (prevKwh != null && prevKvah != null) {
+            final device = _device;
+            if (device != null) {
+              final heatFactors = parseFactorMap(device.heatUnitFactors);
+              final dayFactors = parseFactorMap(device.dayUnitFactors);
+              final currentFactors = _readingType == 'heat' && device.requiresHeatDay ? heatFactors : dayFactors;
+
+              final kwhFactor = currentFactors[kwhKey] ?? 1.0;
+              final kvahFactor = currentFactors[kvahKey] ?? 1.0;
+              final kwhDiff = currentKwh - prevKwh.toDouble();
+              final kvahDiff = currentKvah - prevKvah.toDouble();
+              final kwhCons = kwhDiff * kwhFactor;
+              final kvahCons = kvahDiff * kvahFactor;
+
+              if (kvahCons > 0) {
+                final calculatedPf = kwhCons / kvahCons;
+                final formatted = calculatedPf.toStringAsFixed(3);
+                if (pfCtrl.text != formatted) {
+                  pfCtrl.value = TextEditingValue(
+                    text: formatted,
+                    selection: TextSelection.collapsed(offset: formatted.length),
+                  );
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  static bool _isCumulativeUnit(String unit) {
+    final u = unit.trim().toUpperCase();
+    return u == 'KWH' || u == 'KWHLT' || u == 'KVAH' || u == 'KVARH';
+  }
+
+  Map<String, double> parseFactorMap(String json) {
+    try {
+      final decoded = jsonDecode(json) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, (v as num).toDouble()));
+    } catch (_) {
+      return {};
+    }
   }
 }

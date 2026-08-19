@@ -108,7 +108,9 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
         : device.dayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
     final allUnits = {...heatUnits, ...dayUnits};
     for (final unit in allUnits) {
-      _unitControllers[unit] = TextEditingController();
+      final controller = TextEditingController();
+      controller.addListener(_onUnitValuesChanged);
+      _unitControllers[unit] = controller;
     }
     // Reset reading type
     _readingType = device.requiresHeatDay ? 'heat' : 'day';
@@ -411,10 +413,13 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
 
     // Setup controllers
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _currentDevice?.id != selectedDevice.id) {
-        setState(() {
-          _setupControllersForDevice(selectedDevice);
-        });
+      if (mounted) {
+        if (_currentDevice?.id != selectedDevice.id) {
+          setState(() {
+            _setupControllersForDevice(selectedDevice);
+          });
+        }
+        _onUnitValuesChanged();
       }
     });
     if (_currentDevice == null) {
@@ -433,11 +438,19 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
     final dayFactors = parseFactorMap(selectedDevice.dayUnitFactors);
     final currentFactors = _readingType == 'heat' && selectedDevice.requiresHeatDay ? heatFactors : dayFactors;
 
-    final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
+    final selectedDateTime = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    );
+    final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
+
     final prevReadingAsync = ref.watch(previousReadingProvider((
       deviceId: selectedDevice.id,
       readingType: _readingType,
-      readingDateMs: todayMidnight,
+      readingDateMs: readingDateMs,
       heatNumber: _heatNumberController.text,
     )));
 
@@ -596,6 +609,10 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
               final controller = _unitControllers[unit] ?? TextEditingController();
               final prevVal = prevValues[unit];
               final mf = currentFactors[unit] ?? 1.0;
+              final isCumulative = _isCumulativeUnit(unit);
+              final isPfField = unit.toUpperCase() == 'PF';
+              final hasKwhAndKvah = _unitControllers.keys.any((k) => k.toUpperCase() == 'KWH') &&
+                  _unitControllers.keys.any((k) => k.toUpperCase() == 'KVAH');
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 16),
@@ -604,10 +621,12 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
                   children: [
                     TextField(
                       controller: controller,
+                      readOnly: isPfField && hasKwhAndKvah,
                       decoration: InputDecoration(
                         labelText: unit,
                         prefixIcon: const Icon(Icons.electric_meter_outlined),
                         suffixText: unit,
+                        filled: isPfField && hasKwhAndKvah,
                       ),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       textInputAction: TextInputAction.next,
@@ -619,7 +638,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
                           valueListenable: controller,
                           builder: (context, value, child) {
                             final currentVal = double.tryParse(value.text.trim());
-                            if (currentVal == null) {
+                            if (currentVal == null || !isCumulative) {
                               return Text('Prev: ${prevVal.toStringAsFixed(2)}',
                                   style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
                             }
@@ -857,6 +876,77 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
         ),
       ),
     );
+  }
+
+  void _onUnitValuesChanged() {
+    final kwhKey = _unitControllers.keys.firstWhere((k) => k.toUpperCase() == 'KWH', orElse: () => '');
+    final kvahKey = _unitControllers.keys.firstWhere((k) => k.toUpperCase() == 'KVAH', orElse: () => '');
+    final pfKey = _unitControllers.keys.firstWhere((k) => k.toUpperCase() == 'PF', orElse: () => '');
+
+    if (kwhKey.isNotEmpty && kvahKey.isNotEmpty && pfKey.isNotEmpty) {
+      final kwhCtrl = _unitControllers[kwhKey]!;
+      final kvahCtrl = _unitControllers[kvahKey]!;
+      final pfCtrl = _unitControllers[pfKey]!;
+
+      final currentKwh = double.tryParse(kwhCtrl.text.trim());
+      final currentKvah = double.tryParse(kvahCtrl.text.trim());
+
+      final selectedDateTime = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+        _selectedTime.hour,
+        _selectedTime.minute,
+      );
+      final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
+
+      final prevReading = ref.read(previousReadingProvider((
+        deviceId: _selectedDeviceId ?? '',
+        readingType: _readingType,
+        readingDateMs: readingDateMs,
+        heatNumber: _heatNumberController.text,
+      ))).value;
+
+      if (prevReading != null && currentKwh != null && currentKvah != null) {
+        try {
+          final prevMap = jsonDecode(prevReading.readingValues) as Map<String, dynamic>;
+          final prevKwh = (prevMap[kwhKey] ?? prevMap['KWH'] ?? prevMap['kwh']) as num?;
+          final prevKvah = (prevMap[kvahKey] ?? prevMap['KVAH'] ?? prevMap['kvah']) as num?;
+
+          if (prevKwh != null && prevKvah != null) {
+            final device = _currentDevice;
+            if (device != null) {
+              final heatFactors = parseFactorMap(device.heatUnitFactors);
+              final dayFactors = parseFactorMap(device.dayUnitFactors);
+              final currentFactors = _readingType == 'heat' && device.requiresHeatDay ? heatFactors : dayFactors;
+
+              final kwhFactor = currentFactors[kwhKey] ?? 1.0;
+              final kvahFactor = currentFactors[kvahKey] ?? 1.0;
+              final kwhDiff = currentKwh - prevKwh.toDouble();
+              final kvahDiff = currentKvah - prevKvah.toDouble();
+              final kwhCons = kwhDiff * kwhFactor;
+              final kvahCons = kvahDiff * kvahFactor;
+
+              if (kvahCons > 0) {
+                final calculatedPf = kwhCons / kvahCons;
+                final formatted = calculatedPf.toStringAsFixed(3);
+                if (pfCtrl.text != formatted) {
+                  pfCtrl.value = TextEditingValue(
+                    text: formatted,
+                    selection: TextSelection.collapsed(offset: formatted.length),
+                  );
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  static bool _isCumulativeUnit(String unit) {
+    final u = unit.trim().toUpperCase();
+    return u == 'KWH' || u == 'KWHLT' || u == 'KVAH' || u == 'KVARH';
   }
 }
 
