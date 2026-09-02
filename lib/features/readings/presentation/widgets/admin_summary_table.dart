@@ -179,7 +179,7 @@ class _GroupedHeatRow {
   });
 }
 
-class _SummaryTableView extends ConsumerWidget {
+class _SummaryTableView extends ConsumerStatefulWidget {
   const _SummaryTableView({
     required this.rows,
     required this.qualifiedDevices,
@@ -196,33 +196,36 @@ class _SummaryTableView extends ConsumerWidget {
   final Map<String, Map<String, double?>> diffMap;
   final bool showHeatNumber;
 
-  static const double _fixedW = 80.0;
+  @override
+  ConsumerState<_SummaryTableView> createState() => _SummaryTableViewState();
+}
 
-  // Sub-widths for Heat Summary device blocks
+class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
+  bool _cellSelectMode = false;
+  // Map of cellKey -> {row, col, value, label}
+  final Map<String, ({int row, int col, String value, String label})> _selectedCells = {};
+
+  static const double _fixedW = 80.0;
   static const double _subHeatW = 55.0;
   static const double _subTimeW = 70.0;
   static const double _subValW = 75.0;
   static const double _subActW = 60.0;
-  static const double _deviceBlockW = _subHeatW + _subTimeW + _subValW * 2 + _subActW + 4; // Includes dividers
+  static const double _deviceBlockW = _subHeatW + _subTimeW + _subValW * 2 + _subActW + 4;
 
-  static Widget _hCell(String text, {double width = 100.0, Color? bg, bool bold = true}) =>
-      Container(
-        width: width,
-        height: 34,
-        alignment: Alignment.center,
-        color: bg,
-        child: Text(
-          text,
-          style: TextStyle(
-            fontWeight: bold ? FontWeight.bold : FontWeight.w600,
-            fontSize: 11,
-          ),
-          textAlign: TextAlign.center,
-          overflow: TextOverflow.ellipsis,
-        ),
-      );
+  static Widget _divV() => Container(width: 1, color: Colors.grey.withOpacity(0.2));
+  static Widget _divH() => Divider(height: 1, color: Colors.grey.withOpacity(0.2));
 
-  static void _copyValue(BuildContext context, String text) {
+  String _consStr(String readingId, String unit, String deviceId) {
+    final diffs = widget.diffMap[readingId];
+    if (diffs == null) return '—';
+    final diff = diffs[unit];
+    if (diff == null) return '—';
+    final mf = widget.deviceFactors[deviceId]?[unit] ?? 1.0;
+    final cons = diff * mf;
+    return NumberFormat('#,##0.##').format(cons);
+  }
+
+  void _copySingle(String text) {
     if (text.trim().isEmpty || text == '—') return;
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -241,73 +244,195 @@ class _SummaryTableView extends ConsumerWidget {
     );
   }
 
-  static Widget _dCell(
-    BuildContext context,
-    String text, {
+  void _copySelectedAsColumn() {
+    if (_selectedCells.isEmpty) return;
+    final sorted = _selectedCells.values.toList()
+      ..sort((a, b) {
+        final rowCmp = a.row.compareTo(b.row);
+        if (rowCmp != 0) return rowCmp;
+        return a.col.compareTo(b.col);
+      });
+
+    final text = sorted.map((c) => c.value == '—' ? '' : c.value).join('\n');
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.table_chart_rounded, color: Colors.greenAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${sorted.length} values copied as 1 Vertical Column (Paste in Excel)')),
+          ],
+        ),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _copySelectedAsGrid() {
+    if (_selectedCells.isEmpty) return;
+    final sorted = _selectedCells.values.toList()
+      ..sort((a, b) {
+        final rowCmp = a.row.compareTo(b.row);
+        if (rowCmp != 0) return rowCmp;
+        return a.col.compareTo(b.col);
+      });
+
+    // Group by row
+    final Map<int, List<({int row, int col, String value, String label})>> rowMap = {};
+    for (final item in sorted) {
+      rowMap.putIfAbsent(item.row, () => []).add(item);
+    }
+
+    final StringBuffer buffer = StringBuffer();
+    for (final r in rowMap.keys.toList()..sort()) {
+      final cols = rowMap[r]!..sort((a, b) => a.col.compareTo(b.col));
+      buffer.writeln(cols.map((c) => c.value == '—' ? '' : c.value).join('\t'));
+    }
+
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.grid_on_rounded, color: Colors.greenAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${sorted.length} cells copied as Grid (Tab-separated for Excel)')),
+          ],
+        ),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Widget _buildInteractiveCell({
+    required String cellKey,
+    required int row,
+    required int col,
+    required String text,
+    required String label,
     double width = 100.0,
     Color? textColor,
-  }) =>
-      Tooltip(
-        message: text == '—' || text.isEmpty ? '' : 'Tap to copy value',
+    Color? bg,
+  }) {
+    final isSelected = _selectedCells.containsKey(cellKey);
+
+    final effectiveBg = isSelected
+        ? AppColors.primaryContainer.withOpacity(0.65)
+        : bg;
+
+    return GestureDetector(
+      onLongPress: () {
+        setState(() {
+          _cellSelectMode = true;
+          _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
+        });
+      },
+      onTap: () {
+        if (_cellSelectMode) {
+          setState(() {
+            if (_selectedCells.containsKey(cellKey)) {
+              _selectedCells.remove(cellKey);
+            } else {
+              _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
+            }
+          });
+        } else {
+          _copySingle(text);
+        }
+      },
+      child: Tooltip(
+        message: _cellSelectMode
+            ? (isSelected ? 'Tap to deselect' : 'Tap to select')
+            : (text == '—' || text.isEmpty ? '' : 'Tap to copy value, Long-press for multi-select'),
         waitDuration: const Duration(milliseconds: 600),
-        child: InkWell(
-          onTap: () => _copyValue(context, text),
-          child: Container(
-            width: width,
-            height: 38,
-            alignment: Alignment.center,
-            child: SelectableText(
-              text,
-              style: TextStyle(fontSize: 11, color: textColor),
-              textAlign: TextAlign.center,
-              onTap: () => _copyValue(context, text),
+        child: Container(
+          width: width,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: effectiveBg,
+            border: isSelected
+                ? Border.all(color: AppColors.primary, width: 1.5)
+                : null,
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              color: isSelected ? AppColors.primary : textColor,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
             ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
-      );
+      ),
+    );
+  }
 
-  static Widget _divV() => Container(width: 1, color: Colors.grey.withOpacity(0.2));
-  static Widget _divH() => Divider(height: 1, color: Colors.grey.withOpacity(0.2));
+  static Widget _hCell(
+    String text, {
+    double width = 100.0,
+    Color? bg,
+    bool bold = true,
+    VoidCallback? onTap,
+    String? tooltip,
+  }) {
+    final child = Container(
+      width: width,
+      height: 34,
+      alignment: Alignment.center,
+      color: bg,
+      child: Text(
+        text,
+        style: TextStyle(
+          fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+          fontSize: 11,
+        ),
+        textAlign: TextAlign.center,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
 
-  String _consStr(String readingId, String unit, String deviceId) {
-    final diffs = diffMap[readingId];
-    if (diffs == null) return '—';
-    final diff = diffs[unit];
-    if (diff == null) return '—';
-    final mf = deviceFactors[deviceId]?[unit] ?? 1.0;
-    final cons = diff * mf;
-    return NumberFormat('#,##0.##').format(cons);
+    if (onTap == null) return child;
+
+    return Tooltip(
+      message: tooltip ?? 'Click to select column',
+      child: InkWell(
+        onTap: onTap,
+        child: child,
+      ),
+    );
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final headerBg = theme.colorScheme.surfaceContainerHighest.withOpacity(0.5);
     final deviceHeaderBg = AppColors.primaryContainer.withOpacity(0.4);
+    final isHeat = widget.showHeatNumber;
 
-    final isHeat = showHeatNumber;
-
-    // Sub-widths for Day Summary device blocks (KWH, KWHLT, Act)
     const double daySubValW = 75.0;
     const double daySubActW = 60.0;
-    const double dayDeviceBlockW = daySubValW * 2 + daySubActW + 2; // 212.0
+    const double dayDeviceBlockW = daySubValW * 2 + daySubActW + 2;
 
-    // Device block width depending on tab
     final deviceBlockW = isHeat ? _deviceBlockW : dayDeviceBlockW;
 
-    // Grouping logic for Heat Summary
     final List<_GroupedHeatRow> groupedHeatRows = [];
-    // Grouping logic for Day Summary (exactly one row per Business Day)
     final Map<int, Map<String, SupabaseReadingWithDetails>> groupedDayRows = {};
 
     if (isHeat) {
-      // 1. Group readings by device
       final Map<String, List<SupabaseReadingWithDetails>> deviceReadingsMap = {};
-      for (final rwd in rows) {
+      for (final rwd in widget.rows) {
         deviceReadingsMap.putIfAbsent(rwd.reading.deviceId, () => []).add(rwd);
       }
 
-      // 2. Sort readings for each device chronologically, and group them by 8 AM business day
       final Map<String, Map<int, List<SupabaseReadingWithDetails>>> deviceDayReadings = {};
 
       for (final devId in deviceReadingsMap.keys) {
@@ -322,7 +447,6 @@ class _SummaryTableView extends ConsumerWidget {
         deviceDayReadings[devId] = dayMap;
       }
 
-      // 3. Find the maximum sequenceIndex for each business day
       final Map<int, int> maxSeqPerDay = {};
       for (final dayMap in deviceDayReadings.values) {
         for (final entry in dayMap.entries) {
@@ -336,7 +460,6 @@ class _SummaryTableView extends ConsumerWidget {
         }
       }
 
-      // 4. Build the final _GroupedHeatRow list
       for (final day in maxSeqPerDay.keys) {
         final maxIndex = maxSeqPerDay[day]!;
         for (int seq = 0; seq <= maxIndex; seq++) {
@@ -355,46 +478,100 @@ class _SummaryTableView extends ConsumerWidget {
         }
       }
 
-      // Sort: businessDayMidnightMs descending, sequenceIndex descending
       groupedHeatRows.sort((a, b) {
         final dayCmp = b.businessDayMidnightMs.compareTo(a.businessDayMidnightMs);
         if (dayCmp != 0) return dayCmp;
         return b.sequenceIndex.compareTo(a.sequenceIndex);
       });
     } else {
-      // Day Summary: Group readings by Business Day only
-      for (final rwd in rows) {
+      for (final rwd in widget.rows) {
         final bizDay = AppDateUtils.toBusinessDayMidnightUtcMs(rwd.reading.readingDate);
         groupedDayRows.putIfAbsent(bizDay, () => {})[rwd.reading.deviceId] = rwd;
       }
     }
 
-    final sortedDayKeys = groupedDayRows.keys.toList()
-      ..sort((a, b) => b.compareTo(a));
+    final sortedDayKeys = groupedDayRows.keys.toList()..sort((a, b) => b.compareTo(a));
 
-    final totalDisplayRows = isHeat ? groupedHeatRows.length : sortedDayKeys.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Selection & Export Action Bar
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  OutlinedButton.icon(
+                    icon: Icon(_cellSelectMode ? Icons.close_rounded : Icons.crop_free_rounded, size: 16),
+                    label: Text(
+                      _cellSelectMode ? 'Done' : '📋 Drag & Cell Copy (Excel)',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _cellSelectMode = !_cellSelectMode;
+                        if (!_cellSelectMode) _selectedCells.clear();
+                      });
+                    },
+                  ),
+                  if (_cellSelectMode) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      '${_selectedCells.length} cells selected',
+                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                    ),
+                  ],
+                ],
+              ),
 
-    return SelectionArea(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Export Header Bar
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  isHeat
-                      ? 'Filtered Records (Grouped: $totalDisplayRows heats)'
-                      : 'Filtered Records (Grouped: $totalDisplayRows days)',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                const Spacer(),
+              if (_cellSelectMode && _selectedCells.isNotEmpty)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() => _selectedCells.clear()),
+                      child: const Text('Clear', style: TextStyle(fontSize: 11)),
+                    ),
+                    const SizedBox(width: 4),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.table_rows_rounded, size: 14),
+                      label: Text('Copy Column (${_selectedCells.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _copySelectedAsColumn,
+                    ),
+                    const SizedBox(width: 4),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.grid_on_rounded, size: 14),
+                      label: const Text('Copy Grid', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _copySelectedAsGrid,
+                    ),
+                  ],
+                )
+              else
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
@@ -412,10 +589,10 @@ class _SummaryTableView extends ConsumerWidget {
                     final exporter = ExportReadingsUseCase();
                     final filePath = await exporter.exportAdminSheetToExcel(
                       sheetTitle: isHeat ? 'Heat_Summary' : 'Day_Summary',
-                      devices: qualifiedDevices,
-                      readings: rows,
-                      diffMap: diffMap,
-                      deviceFactors: deviceFactors,
+                      devices: widget.qualifiedDevices,
+                      readings: widget.rows,
+                      diffMap: widget.diffMap,
+                      deviceFactors: widget.deviceFactors,
                     );
 
                     if (filePath != null && context.mounted) {
@@ -425,229 +602,300 @@ class _SummaryTableView extends ConsumerWidget {
                           duration: const Duration(seconds: 10),
                           action: SnackBarAction(
                             label: 'OPEN FILE',
-                            onPressed: () {
-                              OpenFilex.open(filePath);
-                            },
+                            onPressed: () => OpenFilex.open(filePath),
                           ),
                         ),
-                      );
-                    } else if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Export downloaded successfully.')),
                       );
                     }
                   },
                 ),
-              ],
-            ),
+            ],
           ),
+        ),
 
-          Builder(
-            builder: (context) {
-              final scrollController = ScrollController();
-              return Scrollbar(
+        // Scrollable Table with Gesture Drag Support
+        Builder(
+          builder: (context) {
+            final scrollController = ScrollController();
+            return Scrollbar(
+              controller: scrollController,
+              thumbVisibility: true,
+              trackVisibility: true,
+              interactive: true,
+              thickness: 8,
+              child: SingleChildScrollView(
                 controller: scrollController,
-                thumbVisibility: true,
-                trackVisibility: true,
-                interactive: true,
-                thickness: 8,
-                child: SingleChildScrollView(
-                  controller: scrollController,
-                  scrollDirection: Axis.horizontal,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // ── Row 1: Spanning headers ─────────────────────────────────
-                      Row(children: [
-                        _hCell('Date', width: _fixedW, bg: headerBg),
-                        ...qualifiedDevices.expand((d) => [
-                          _divV(),
-                          Container(
-                            width: deviceBlockW,
-                            height: 34,
-                            alignment: Alignment.center,
-                            color: deviceHeaderBg,
-                            child: Text(
-                              deviceNames[d.id] ?? d.id,
-                              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                scrollDirection: Axis.horizontal,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header Row 1: Device Spanning Headers
+                    Row(children: [
+                      _hCell('Date', width: _fixedW, bg: headerBg),
+                      ...widget.qualifiedDevices.expand((d) => [
+                        _divV(),
+                        Container(
+                          width: deviceBlockW,
+                          height: 34,
+                          alignment: Alignment.center,
+                          color: deviceHeaderBg,
+                          child: Text(
+                            widget.deviceNames[d.id] ?? d.id,
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ]),
+                        ),
                       ]),
+                    ]),
 
-                      _divH(),
+                    _divH(),
 
-                      // ── Row 2: Sub-column headers ───────────────────────────────
-                      Row(children: [
-                        _hCell('', width: _fixedW, bg: headerBg),
-                        ...qualifiedDevices.expand((d) => [
-                          _divV(),
-                          if (isHeat) ...[
-                            _hCell('Heat #', width: _subHeatW, bg: deviceHeaderBg.withOpacity(0.5)),
+                    // Header Row 2: Sub-column Headers
+                    Row(children: [
+                      _hCell('', width: _fixedW, bg: headerBg),
+                      ...widget.qualifiedDevices.asMap().entries.expand((entry) {
+                        final devIdx = entry.key;
+                        final d = entry.value;
+                        final devName = widget.deviceNames[d.id] ?? d.id;
+
+                        void selectFullColumn(String colType, int colOffset) {
+                          setState(() {
+                            _cellSelectMode = true;
+                            if (isHeat) {
+                              for (int rIdx = 0; rIdx < groupedHeatRows.length; rIdx++) {
+                                final gr = groupedHeatRows[rIdx];
+                                final rwd = gr.deviceReadings[d.id];
+                                if (rwd != null) {
+                                  String val = '';
+                                  if (colType == 'heat') val = rwd.reading.heatNumber;
+                                  if (colType == 'kwh') val = _consStr(rwd.reading.id, 'KWH', d.id);
+                                  if (colType == 'kwhlt') val = _consStr(rwd.reading.id, 'KWHLT', d.id);
+                                  final key = 'h_${rIdx}_${devIdx}_$colOffset';
+                                  _selectedCells[key] = (row: rIdx, col: devIdx * 5 + colOffset, value: val, label: '$devName $colType');
+                                }
+                              }
+                            } else {
+                              for (int rIdx = 0; rIdx < sortedDayKeys.length; rIdx++) {
+                                final day = sortedDayKeys[rIdx];
+                                final rwd = groupedDayRows[day]?[d.id];
+                                if (rwd != null) {
+                                  String val = '';
+                                  if (colType == 'kwh') val = _consStr(rwd.reading.id, 'KWH', d.id);
+                                  if (colType == 'kwhlt') val = _consStr(rwd.reading.id, 'KWHLT', d.id);
+                                  final key = 'd_${rIdx}_${devIdx}_$colOffset';
+                                  _selectedCells[key] = (row: rIdx, col: devIdx * 2 + colOffset, value: val, label: '$devName $colType');
+                                }
+                              }
+                            }
+                          });
+                        }
+
+                        if (isHeat) {
+                          return [
+                            _divV(),
+                            _hCell('Heat #', width: _subHeatW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('heat', 1), tooltip: 'Click to select all Heat # values for $devName'),
                             _divV(),
                             _hCell('Time', width: _subTimeW, bg: deviceHeaderBg.withOpacity(0.5)),
                             _divV(),
+                            _hCell('KWH', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('kwh', 3), tooltip: 'Click to select all KWH values for $devName'),
+                            _divV(),
+                            _hCell('KWHLT', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('kwhlt', 4), tooltip: 'Click to select all KWHLT values for $devName'),
+                            _divV(),
+                            _hCell('Act', width: _subActW, bg: deviceHeaderBg.withOpacity(0.5)),
+                          ];
+                        }
+
+                        return [
+                          _divV(),
+                          _hCell('KWH', width: daySubValW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('kwh', 1), tooltip: 'Click to select all KWH values for $devName'),
+                          _divV(),
+                          _hCell('KWHLT', width: daySubValW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('kwhlt', 2), tooltip: 'Click to select all KWHLT values for $devName'),
+                          _divV(),
+                          _hCell('Act', width: daySubActW, bg: deviceHeaderBg.withOpacity(0.5)),
+                        ];
+                      }),
+                    ]),
+
+                    _divH(),
+
+                    // Data rows
+                    if (isHeat)
+                      ...groupedHeatRows.asMap().entries.map((entry) {
+                        final rIdx = entry.key;
+                        final gr = entry.value;
+                        final dateStr = DateFormat('dd MMM yy').format(
+                          DateTime.fromMillisecondsSinceEpoch(gr.businessDayMidnightMs, isUtc: true).toLocal(),
+                        );
+
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(children: [
+                              _buildInteractiveCell(
+                                cellKey: 'date_$rIdx',
+                                row: rIdx,
+                                col: 0,
+                                text: dateStr,
+                                label: 'Date',
+                                width: _fixedW,
+                              ),
+                              ...widget.qualifiedDevices.asMap().entries.expand((devEntry) {
+                                final devIdx = devEntry.key;
+                                final d = devEntry.value;
+                                final devName = widget.deviceNames[d.id] ?? d.id;
+                                final rwd = gr.deviceReadings[d.id];
+
+                                if (rwd == null) {
+                                  return [
+                                    _divV(),
+                                    _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_1', row: rIdx, col: devIdx * 5 + 1, text: '—', label: '$devName Heat', width: _subHeatW),
+                                    _divV(),
+                                    _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_2', row: rIdx, col: devIdx * 5 + 2, text: '—', label: '$devName Time', width: _subTimeW),
+                                    _divV(),
+                                    _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_3', row: rIdx, col: devIdx * 5 + 3, text: '—', label: '$devName KWH', width: _subValW),
+                                    _divV(),
+                                    _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_4', row: rIdx, col: devIdx * 5 + 4, text: '—', label: '$devName KWHLT', width: _subValW),
+                                    _divV(),
+                                    const SizedBox(width: _subActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
+                                  ];
+                                }
+
+                                final r = rwd.reading;
+                                final readingTimeStr = DateFormat('hh:mm a').format(
+                                  DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal(),
+                                );
+                                final kwhStr = _consStr(r.id, 'KWH', d.id);
+                                final kwhltStr = _consStr(r.id, 'KWHLT', d.id);
+
+                                return [
+                                  _divV(),
+                                  _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_1', row: rIdx, col: devIdx * 5 + 1, text: r.heatNumber, label: '$devName Heat', width: _subHeatW),
+                                  _divV(),
+                                  _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_2', row: rIdx, col: devIdx * 5 + 2, text: readingTimeStr, label: '$devName Time', width: _subTimeW),
+                                  _divV(),
+                                  _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_3', row: rIdx, col: devIdx * 5 + 3, text: kwhStr, label: '$devName KWH', width: _subValW),
+                                  _divV(),
+                                  _buildInteractiveCell(cellKey: 'h_${rIdx}_${devIdx}_4', row: rIdx, col: devIdx * 5 + 4, text: kwhltStr, label: '$devName KWHLT', width: _subValW),
+                                  _divV(),
+                                  SizedBox(
+                                    width: _subActW,
+                                    height: 38,
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.edit_rounded, size: 14),
+                                          onPressed: () {
+                                            context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
+                                          },
+                                          tooltip: 'Edit',
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
+                                          onPressed: () => _deleteReading(context, ref, r.id),
+                                          tooltip: 'Delete',
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ];
+                              }),
+                            ]),
+                            _divH(),
                           ],
-                          _hCell('KWH', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5)),
-                          _divV(),
-                          _hCell('KWHLT', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5)),
-                          _divV(),
-                          _hCell('Act', width: _subActW, bg: deviceHeaderBg.withOpacity(0.5)),
-                        ]),
-                      ]),
+                        );
+                      })
+                    else
+                      ...sortedDayKeys.asMap().entries.map((entry) {
+                        final rIdx = entry.key;
+                        final day = entry.value;
+                        final dateStr = DateFormat('dd MMM yy').format(
+                          DateTime.fromMillisecondsSinceEpoch(day, isUtc: true).toLocal(),
+                        );
 
-                      _divH(),
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(children: [
+                              _buildInteractiveCell(
+                                cellKey: 'date_$rIdx',
+                                row: rIdx,
+                                col: 0,
+                                text: dateStr,
+                                label: 'Date',
+                                width: _fixedW,
+                              ),
+                              ...widget.qualifiedDevices.asMap().entries.expand((devEntry) {
+                                final devIdx = devEntry.key;
+                                final d = devEntry.value;
+                                final devName = widget.deviceNames[d.id] ?? d.id;
+                                final rwd = groupedDayRows[day]?[d.id];
 
-                      // ── Data rows ────────────────────────────────────────────────
-                      if (isHeat)
-                        ...groupedHeatRows.map((gr) {
-                          final dateStr = DateFormat('dd MMM yy').format(
-                            DateTime.fromMillisecondsSinceEpoch(gr.businessDayMidnightMs, isUtc: true).toLocal(),
-                          );
-
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(children: [
-                                _dCell(context, dateStr, width: _fixedW),
-                                ...qualifiedDevices.expand((d) {
-                                  final rwd = gr.deviceReadings[d.id];
-                                  if (rwd == null) {
-                                    return [
-                                      _divV(),
-                                      _dCell(context, '—', width: _subHeatW),
-                                      _divV(),
-                                      _dCell(context, '—', width: _subTimeW),
-                                      _divV(),
-                                      _dCell(context, '—', width: _subValW),
-                                      _divV(),
-                                      _dCell(context, '—', width: _subValW),
-                                      _divV(),
-                                      const SizedBox(width: _subActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
-                                    ];
-                                  }
-
-                                  final r = rwd.reading;
-                                  final readingTimeStr = DateFormat('hh:mm a').format(
-                                    DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal(),
-                                  );
-
+                                if (rwd == null) {
                                   return [
                                     _divV(),
-                                    _dCell(context, r.heatNumber, width: _subHeatW),
+                                    _buildInteractiveCell(cellKey: 'd_${rIdx}_${devIdx}_1', row: rIdx, col: devIdx * 2 + 1, text: '—', label: '$devName KWH', width: daySubValW),
                                     _divV(),
-                                    _dCell(context, readingTimeStr, width: _subTimeW),
+                                    _buildInteractiveCell(cellKey: 'd_${rIdx}_${devIdx}_2', row: rIdx, col: devIdx * 2 + 2, text: '—', label: '$devName KWHLT', width: daySubValW),
                                     _divV(),
-                                    _dCell(context, _consStr(r.id, 'KWH', d.id), width: _subValW),
-                                    _divV(),
-                                    _dCell(context, _consStr(r.id, 'KWHLT', d.id), width: _subValW),
-                                    _divV(),
-                                    SizedBox(
-                                      width: _subActW,
-                                      height: 38,
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.edit_rounded, size: 14),
-                                            onPressed: () {
-                                              context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
-                                            },
-                                            tooltip: 'Edit',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
-                                            onPressed: () => _deleteReading(context, ref, r.id),
-                                            tooltip: 'Delete',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
+                                    const SizedBox(width: daySubActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
                                   ];
-                                }),
-                              ]),
-                              _divH(),
-                            ],
-                          );
-                        })
-                      else
-                        ...sortedDayKeys.map((day) {
-                          final dateStr = DateFormat('dd MMM yy').format(
-                            DateTime.fromMillisecondsSinceEpoch(day, isUtc: true).toLocal(),
-                          );
+                                }
 
-                          return Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(children: [
-                                _dCell(context, dateStr, width: _fixedW),
-                                ...qualifiedDevices.expand((d) {
-                                  final rwd = groupedDayRows[day]?[d.id];
-                                  if (rwd == null) {
-                                    return [
-                                      _divV(),
-                                      _dCell(context, '—', width: _subValW),
-                                      _divV(),
-                                      _dCell(context, '—', width: _subValW),
-                                      _divV(),
-                                      const SizedBox(width: _subActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
-                                    ];
-                                  }
+                                final r = rwd.reading;
+                                final kwhStr = _consStr(r.id, 'KWH', d.id);
+                                final kwhltStr = _consStr(r.id, 'KWHLT', d.id);
 
-                                  final r = rwd.reading;
-
-                                  return [
-                                    _divV(),
-                                    _dCell(context, _consStr(r.id, 'KWH', d.id), width: _subValW),
-                                    _divV(),
-                                    _dCell(context, _consStr(r.id, 'KWHLT', d.id), width: _subValW),
-                                    _divV(),
-                                    SizedBox(
-                                      width: _subActW,
-                                      height: 38,
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(Icons.edit_rounded, size: 14),
-                                            onPressed: () {
-                                              context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
-                                            },
-                                            tooltip: 'Edit',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
-                                            onPressed: () => _deleteReading(context, ref, r.id),
-                                            tooltip: 'Delete',
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                          ),
-                                        ],
-                                      ),
+                                return [
+                                  _divV(),
+                                  _buildInteractiveCell(cellKey: 'd_${rIdx}_${devIdx}_1', row: rIdx, col: devIdx * 2 + 1, text: kwhStr, label: '$devName KWH', width: daySubValW),
+                                  _divV(),
+                                  _buildInteractiveCell(cellKey: 'd_${rIdx}_${devIdx}_2', row: rIdx, col: devIdx * 2 + 2, text: kwhltStr, label: '$devName KWHLT', width: daySubValW),
+                                  _divV(),
+                                  SizedBox(
+                                    width: daySubActW,
+                                    height: 38,
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.edit_rounded, size: 14),
+                                          onPressed: () {
+                                            context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
+                                          },
+                                          tooltip: 'Edit',
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
+                                          onPressed: () => _deleteReading(context, ref, r.id),
+                                          tooltip: 'Delete',
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                        ),
+                                      ],
                                     ),
-                                  ];
-                                }),
-                              ]),
-                              _divH(),
-                            ],
-                          );
-                        }),
-                    ],
-                  ),
+                                  ),
+                                ];
+                              }),
+                            ]),
+                            _divH(),
+                          ],
+                        );
+                      }),
+                  ],
                 ),
-              );
-            },
-          ),
-        ],
-      ),
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 

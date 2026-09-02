@@ -136,23 +136,61 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     );
   }
 
-  static Widget _headerCell(String text, {bool bold = false, Color? bg, double width = _colW}) =>
-      Container(
-        width: width,
-        height: 36,
-        alignment: Alignment.center,
-        color: bg,
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
-          ),
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+  void _copySingleColumn(String colName, List<String> values) {
+    if (values.isEmpty) return;
+    final text = values.join('\n');
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${values.length} values for "$colName" copied as 1 Vertical Column (Ready for Excel)')),
+          ],
         ),
-      );
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  static Widget _headerCell(
+    String text, {
+    bool bold = false,
+    Color? bg,
+    double width = _colW,
+    VoidCallback? onTap,
+    String? tooltip,
+  }) {
+    final child = Container(
+      width: width,
+      height: 36,
+      alignment: Alignment.center,
+      color: bg,
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+        ),
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    if (onTap == null) return child;
+
+    return Tooltip(
+      message: tooltip ?? 'Click to copy column for Excel',
+      child: InkWell(
+        onTap: onTap,
+        child: child,
+      ),
+    );
+  }
 
   static Widget _dataCell(
     BuildContext context,
@@ -426,16 +464,46 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                     Row(children: [
                       if (_selectionMode) _headerCell('Select', bold: true, bg: headerBg, width: _checkW),
                       if (widget.showOperatorColumn) _headerCell('Operator', bold: true, bg: headerBg, width: _opW),
-                      _headerCell('Date', bold: true, bg: headerBg, width: _fixedW),
+                      _headerCell(
+                        'Date',
+                        bold: true,
+                        bg: headerBg,
+                        width: _fixedW,
+                        onTap: () => _copySingleColumn(
+                          'Date',
+                          displayReadings.map((r) => DateFormat('dd MMM yyyy').format(DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal())).toList(),
+                        ),
+                        tooltip: 'Click to copy all Dates for Excel',
+                      ),
                       _dividerV(),
-                      _headerCell('Reading Time', bold: true, bg: headerBg, width: _fixedW),
+                      _headerCell(
+                        'Reading Time',
+                        bold: true,
+                        bg: headerBg,
+                        width: _fixedW,
+                        onTap: () => _copySingleColumn(
+                          'Reading Time',
+                          displayReadings.map((r) => DateFormat('hh:mm a').format(DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal())).toList(),
+                        ),
+                        tooltip: 'Click to copy all Reading Times for Excel',
+                      ),
                       _dividerV(),
                       _headerCell('Posted Time', bold: true, bg: headerBg, width: _fixedW),
                       if (widget.showTypeColumn) ...[
                         _dividerV(),
                         _headerCell('Type', bold: true, bg: headerBg, width: _fixedW),
                         _dividerV(),
-                        _headerCell('Heat #', bold: true, bg: headerBg, width: _fixedW),
+                        _headerCell(
+                          'Heat #',
+                          bold: true,
+                          bg: headerBg,
+                          width: _fixedW,
+                          onTap: () => _copySingleColumn(
+                            'Heat #',
+                            displayReadings.map((r) => r.heatNumber).toList(),
+                          ),
+                          tooltip: 'Click to copy all Heat numbers for Excel',
+                        ),
                       ],
                       ...widget.matrixUnits.expand((u) {
                         final isCum = _isCumulativeUnit(u);
@@ -443,24 +511,80 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                         if (isMf) {
                           return [
                             _dividerV(),
-                            _headerCell('Reading', bg: headerBg),
+                            _headerCell(
+                              'Reading',
+                              bg: headerBg,
+                              onTap: () => _copySingleColumn(
+                                '$u Reading',
+                                displayReadings.map((r) => _parseValues(r.readingValues)[u]?.toStringAsFixed(2) ?? '').toList(),
+                              ),
+                              tooltip: 'Click to copy all $u Reading values for Excel',
+                            ),
                             _dividerV(),
-                            _headerCell('Calc (×MF)', bg: headerBg),
+                            _headerCell(
+                              'Calc (×MF)',
+                              bg: headerBg,
+                              onTap: () => _copySingleColumn(
+                                '$u Calc',
+                                displayReadings.map((r) {
+                                  final v = _parseValues(r.readingValues)[u];
+                                  final mf = (r.readingType == 'heat' ? widget.heatUnitFactors : widget.dayUnitFactors)[u] ?? 1.0;
+                                  return v != null ? (v * mf).toStringAsFixed(2) : '';
+                                }).toList(),
+                              ),
+                              tooltip: 'Click to copy all $u Calc values for Excel',
+                            ),
                           ];
                         }
                         if (!isCum) {
                           return [
                             _dividerV(),
-                            _headerCell('Reading', bg: headerBg),
+                            _headerCell(
+                              'Reading',
+                              bg: headerBg,
+                              onTap: () => _copySingleColumn(
+                                '$u Reading',
+                                displayReadings.map((r) => _parseValues(r.readingValues)[u]?.toStringAsFixed(2) ?? '').toList(),
+                              ),
+                              tooltip: 'Click to copy all $u Reading values for Excel',
+                            ),
                           ];
                         }
                         return [
                           _dividerV(),
-                          _headerCell('Reading', bg: headerBg),
+                          _headerCell(
+                            'Reading',
+                            bg: headerBg,
+                            onTap: () => _copySingleColumn(
+                              '$u Reading',
+                              displayReadings.map((r) => _parseValues(r.readingValues)[u]?.toStringAsFixed(2) ?? '').toList(),
+                            ),
+                            tooltip: 'Click to copy all $u Reading values for Excel',
+                          ),
                           _dividerV(),
-                          _headerCell('Difference', bg: headerBg),
+                          _headerCell(
+                            'Difference',
+                            bg: headerBg,
+                            onTap: () => _copySingleColumn(
+                              '$u Difference',
+                              displayReadings.map((r) => diffMap[r.id]?[u]?.toStringAsFixed(2) ?? '').toList(),
+                            ),
+                            tooltip: 'Click to copy all $u Differences for Excel',
+                          ),
                           _dividerV(),
-                          _headerCell('Consumption', bg: headerBg),
+                          _headerCell(
+                            'Consumption',
+                            bg: headerBg,
+                            onTap: () => _copySingleColumn(
+                              '$u Consumption',
+                              displayReadings.map((r) {
+                                final diff = diffMap[r.id]?[u];
+                                final mf = (r.readingType == 'heat' ? widget.heatUnitFactors : widget.dayUnitFactors)[u] ?? 1.0;
+                                return diff != null ? (diff * mf).toStringAsFixed(2) : '';
+                              }).toList(),
+                            ),
+                            tooltip: 'Click to copy all $u Consumptions for Excel',
+                          ),
                         ];
                       }),
                       if (widget.showAdminActions) ...[
