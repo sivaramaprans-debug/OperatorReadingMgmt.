@@ -25,6 +25,8 @@ import '../features/readings/presentation/screens/admin_reading_edit_screen.dart
 import '../features/audit/presentation/screens/admin_audit_logs_screen.dart';
 import '../features/readings/presentation/screens/dedusting_readings_screen.dart';
 import '../features/readings/presentation/screens/water_readings_screen.dart';
+import '../features/logsheet/presentation/screens/log_sheet_list_screen.dart';
+import '../features/logsheet/presentation/screens/log_sheet_add_screen.dart';
 import '../features/settings/presentation/screens/settings_screen.dart';
 import '../database/repositories/supabase_operators_repository.dart';
 import '../database/repositories/supabase_devices_repository.dart';
@@ -328,6 +330,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             OperatorReadingEditScreen(readingId: readingId, reading: reading),
           );
         },
+      ),
+      GoRoute(
+        path: RoutePaths.logSheets,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const LogSheetListScreen(),
+        ),
+      ),
+      GoRoute(
+        path: RoutePaths.logSheetAdd,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const LogSheetAddScreen(),
+        ),
       ),
     ],
   );

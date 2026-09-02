@@ -35,6 +35,10 @@ abstract final class RoutePaths {
   // Settings
   static const String settings = '/settings';
 
+  // Log Sheets
+  static const String logSheets = '/logsheets';
+  static const String logSheetAdd = '/logsheets/add';
+
   // Helpers — build concrete paths with IDs
   static String adminOperatorDetailPath(String id) =>
       '/admin/operators/$id';

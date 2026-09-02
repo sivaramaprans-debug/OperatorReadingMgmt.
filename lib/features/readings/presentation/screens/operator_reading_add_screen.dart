@@ -16,6 +16,7 @@ import '../notifiers/reading_form_notifier.dart';
 import '../notifiers/previous_reading_provider.dart';
 import '../notifiers/heat_validation_provider.dart';
 import '../widgets/readings_calculated_table.dart';
+import 'operator_reading_edit_screen.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 import '../../../dashboard/presentation/notifiers/operator_dashboard_notifier.dart';
 import '../../../dashboard/presentation/notifiers/admin_dashboard_notifier.dart';
@@ -603,6 +604,60 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
                 ),
                 const SizedBox(height: 20),
               ],
+            ],
+
+            if (prevReadingAsync.value != null) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.history_rounded, size: 20, color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Last Entry: ${DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.fromMillisecondsSinceEpoch(prevReadingAsync.value!.readingDate).toLocal())}${prevReadingAsync.value!.heatNumber.isNotEmpty ? ' (Heat #${prevReadingAsync.value!.heatNumber})' : ''}',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            'Need to correct previous entry? Edit before submitting.',
+                            style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: const Text('Edit Last', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: () async {
+                        final updated = await Navigator.of(context).push<bool>(
+                          MaterialPageRoute(
+                            builder: (_) => OperatorReadingEditScreen(
+                              readingId: prevReadingAsync.value!.id,
+                              reading: prevReadingAsync.value,
+                            ),
+                          ),
+                        );
+                        if (updated == true) {
+                          ref.invalidate(previousReadingProvider);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
             ],
 
             ...currentUnits.map((unit) {

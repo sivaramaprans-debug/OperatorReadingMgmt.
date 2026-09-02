@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
@@ -221,16 +222,47 @@ class _SummaryTableView extends ConsumerWidget {
         ),
       );
 
-  static Widget _dCell(String text, {double width = 100.0, Color? textColor}) =>
-      Container(
-        width: width,
-        height: 38,
-        alignment: Alignment.center,
-        child: Text(
-          text,
-          style: TextStyle(fontSize: 11, color: textColor),
-          textAlign: TextAlign.center,
-          overflow: TextOverflow.ellipsis,
+  static void _copyValue(BuildContext context, String text) {
+    if (text.trim().isEmpty || text == '—') return;
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.copy_rounded, size: 16, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Copied "$text" to clipboard (Ready for Excel)')),
+          ],
+        ),
+        duration: const Duration(milliseconds: 900),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  static Widget _dCell(
+    BuildContext context,
+    String text, {
+    double width = 100.0,
+    Color? textColor,
+  }) =>
+      Tooltip(
+        message: text == '—' || text.isEmpty ? '' : 'Tap to copy value',
+        waitDuration: const Duration(milliseconds: 600),
+        child: InkWell(
+          onTap: () => _copyValue(context, text),
+          child: Container(
+            width: width,
+            height: 38,
+            alignment: Alignment.center,
+            child: SelectableText(
+              text,
+              style: TextStyle(fontSize: 11, color: textColor),
+              textAlign: TextAlign.center,
+              onTap: () => _copyValue(context, text),
+            ),
+          ),
         ),
       );
 
@@ -479,19 +511,19 @@ class _SummaryTableView extends ConsumerWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Row(children: [
-                                _dCell(dateStr, width: _fixedW),
+                                _dCell(context, dateStr, width: _fixedW),
                                 ...qualifiedDevices.expand((d) {
                                   final rwd = gr.deviceReadings[d.id];
                                   if (rwd == null) {
                                     return [
                                       _divV(),
-                                      _dCell('—', width: _subHeatW),
+                                      _dCell(context, '—', width: _subHeatW),
                                       _divV(),
-                                      _dCell('—', width: _subTimeW),
+                                      _dCell(context, '—', width: _subTimeW),
                                       _divV(),
-                                      _dCell('—', width: _subValW),
+                                      _dCell(context, '—', width: _subValW),
                                       _divV(),
-                                      _dCell('—', width: _subValW),
+                                      _dCell(context, '—', width: _subValW),
                                       _divV(),
                                       const SizedBox(width: _subActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
                                     ];
@@ -504,13 +536,13 @@ class _SummaryTableView extends ConsumerWidget {
 
                                   return [
                                     _divV(),
-                                    _dCell(r.heatNumber, width: _subHeatW),
+                                    _dCell(context, r.heatNumber, width: _subHeatW),
                                     _divV(),
-                                    _dCell(readingTimeStr, width: _subTimeW),
+                                    _dCell(context, readingTimeStr, width: _subTimeW),
                                     _divV(),
-                                    _dCell(_consStr(r.id, 'KWH', d.id), width: _subValW),
+                                    _dCell(context, _consStr(r.id, 'KWH', d.id), width: _subValW),
                                     _divV(),
-                                    _dCell(_consStr(r.id, 'KWHLT', d.id), width: _subValW),
+                                    _dCell(context, _consStr(r.id, 'KWHLT', d.id), width: _subValW),
                                     _divV(),
                                     SizedBox(
                                       width: _subActW,
@@ -554,15 +586,15 @@ class _SummaryTableView extends ConsumerWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Row(children: [
-                                _dCell(dateStr, width: _fixedW),
+                                _dCell(context, dateStr, width: _fixedW),
                                 ...qualifiedDevices.expand((d) {
                                   final rwd = groupedDayRows[day]?[d.id];
                                   if (rwd == null) {
                                     return [
                                       _divV(),
-                                      _dCell('—', width: _subValW),
+                                      _dCell(context, '—', width: _subValW),
                                       _divV(),
-                                      _dCell('—', width: _subValW),
+                                      _dCell(context, '—', width: _subValW),
                                       _divV(),
                                       const SizedBox(width: _subActW, height: 38, child: Center(child: Text('—', style: TextStyle(fontSize: 11)))),
                                     ];
@@ -572,9 +604,9 @@ class _SummaryTableView extends ConsumerWidget {
 
                                   return [
                                     _divV(),
-                                    _dCell(_consStr(r.id, 'KWH', d.id), width: _subValW),
+                                    _dCell(context, _consStr(r.id, 'KWH', d.id), width: _subValW),
                                     _divV(),
-                                    _dCell(_consStr(r.id, 'KWHLT', d.id), width: _subValW),
+                                    _dCell(context, _consStr(r.id, 'KWHLT', d.id), width: _subValW),
                                     _divV(),
                                     SizedBox(
                                       width: _subActW,

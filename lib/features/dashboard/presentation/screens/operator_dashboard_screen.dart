@@ -107,6 +107,16 @@ class OperatorDashboardScreen extends ConsumerWidget {
                 ),
                 onPressed: () => context.push(RoutePaths.operatorReadings),
               ),
+              const SizedBox(height: 16),
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.assignment_outlined),
+                label: const Text('Log Sheet (Work & Maintenance)'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.all(22),
+                  textStyle: theme.textTheme.titleMedium,
+                ),
+                onPressed: () => context.push(RoutePaths.logSheets),
+              ),
             ],
           ),
         ),

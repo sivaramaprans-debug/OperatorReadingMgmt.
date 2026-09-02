@@ -326,4 +326,48 @@ class SupabaseReadingsRepository {
     if (data == null) return null;
     return SupabaseReading.fromMap(data);
   }
+
+  /// Checks if a reading is the latest (most recent) reading entered for its device.
+  /// Used to allow operators to edit the most recent reading while locking older entries.
+  Future<bool> isLatestReadingForDevice({
+    required String deviceId,
+    required String readingId,
+  }) async {
+    final targetData = await supabase
+        .from(_table)
+        .select()
+        .eq('id', readingId)
+        .maybeSingle();
+    if (targetData == null) return false;
+    final target = SupabaseReading.fromMap(targetData);
+
+    // Fetch readings for this device that are newer or equal date
+    final newerData = await supabase
+        .from(_table)
+        .select()
+        .eq('device_id', deviceId)
+        .neq('id', readingId)
+        .gte('reading_date', target.readingDate)
+        .order('reading_date', ascending: false)
+        .order('created_at', ascending: false)
+        .limit(20);
+
+    final newerList = (newerData as List).map((m) => SupabaseReading.fromMap(m as Map<String, dynamic>)).toList();
+    for (final r in newerList) {
+      if (r.readingDate > target.readingDate) {
+        return false;
+      }
+      if (r.readingDate == target.readingDate) {
+        if (target.readingType == 'heat' && r.readingType == 'heat') {
+          final tHeat = int.tryParse(target.heatNumber) ?? 0;
+          final rHeat = int.tryParse(r.heatNumber) ?? 0;
+          if (rHeat > tHeat) return false;
+        } else if (r.createdAt > target.createdAt) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
 }
+

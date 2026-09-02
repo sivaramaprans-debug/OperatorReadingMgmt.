@@ -139,6 +139,12 @@ class AdminDashboardScreen extends ConsumerWidget {
                     color: Colors.blue,
                     onTap: () => context.push(RoutePaths.adminWaterReadings),
                   ),
+                  _ActionCard(
+                    title: 'Plant Log Sheets',
+                    icon: Icons.assignment_outlined,
+                    color: Colors.teal,
+                    onTap: () => context.push(RoutePaths.logSheets),
+                  ),
                 ],
               ),
             ],

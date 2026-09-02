@@ -43,21 +43,24 @@ class EditReadingUseCase {
         return (false, const ValidationFailure('You do not have permission to edit this reading.'));
       }
 
-      final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
-      if (existing.readingDate != todayMidnight) {
-        return (false, const ValidationFailure('Readings can only be edited on the day they were created.'));
+      final isLatest = await readingsRepo.isLatestReadingForDevice(
+        deviceId: existing.deviceId,
+        readingId: readingId,
+      );
+      if (!isLatest) {
+        return (false, const ValidationFailure('Only the last entered reading for this device can be edited. Subsequent readings have already been recorded.'));
       }
 
       if (existing.readingType != readingType || existing.heatNumber != finalHeatNumber) {
         final isDuplicate = await readingsRepo.existsDuplicate(
           deviceId: existing.deviceId,
-          readingDateMs: todayMidnight,
+          readingDateMs: existing.readingDate,
           readingType: readingType,
           heatNumber: finalHeatNumber,
           excludeId: readingId,
         );
         if (isDuplicate) {
-          return (false, const ValidationFailure('A reading with this Type/Heat already exists today.'));
+          return (false, const ValidationFailure('A reading with this Type/Heat already exists for this date.'));
         }
       }
 
