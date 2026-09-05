@@ -34,17 +34,50 @@ class _AdminDepartmentsScreenState extends ConsumerState<AdminDepartmentsScreen>
     final newSectionCtrl = TextEditingController();
     final newWorkTypeCtrl = TextEditingController();
 
+    Future<void> onSave(BuildContext ctx) async {
+      final name = nameCtrl.text.trim();
+      final code = codeCtrl.text.trim();
+      if (name.isEmpty || code.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Name and Code are required')),
+        );
+        return;
+      }
+
+      final repo = ref.read(plantDepartmentsRepoProvider);
+      if (isEditing) {
+        await repo.update(
+          dept.id,
+          name: name,
+          code: code,
+          description: descCtrl.text.trim(),
+          sections: sections,
+          workTypes: workTypes,
+        );
+      } else {
+        await repo.create(
+          name: name,
+          code: code,
+          description: descCtrl.text.trim(),
+          sections: sections,
+          workTypes: workTypes,
+        );
+      }
+      if (ctx.mounted) Navigator.pop(ctx, true);
+    }
+
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
           final theme = Theme.of(context);
+          final screenHeight = MediaQuery.of(context).size.height;
           return Dialog(
-            insetPadding: const EdgeInsets.all(16),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 540, maxHeight: 680),
+              constraints: BoxConstraints(maxWidth: 540, maxHeight: screenHeight * 0.85),
               child: Padding(
                 padding: const EdgeInsets.all(20),
                 child: Column(
@@ -56,14 +89,26 @@ class _AdminDepartmentsScreenState extends ConsumerState<AdminDepartmentsScreen>
                           backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                           child: const Icon(Icons.business_rounded, color: AppColors.primary),
                         ),
-                        const SizedBox(width: 12),
-                        Text(
-                          isEditing ? 'Edit Department / Division' : 'Add Department / Division',
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            isEditing ? 'Edit Division' : 'Add Division',
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        const Spacer(),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          ),
+                          icon: const Icon(Icons.check_rounded, size: 16),
+                          label: const Text('Save'),
+                          onPressed: () => onSave(ctx),
+                        ),
+                        const SizedBox(width: 4),
                         IconButton(
                           icon: const Icon(Icons.close),
+                          tooltip: 'Cancel',
                           onPressed: () => Navigator.pop(ctx, false),
                         ),
                       ],
@@ -195,47 +240,22 @@ class _AdminDepartmentsScreenState extends ConsumerState<AdminDepartmentsScreen>
                     ),
                     const Divider(height: 24),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('Cancel'),
+                        Expanded(
+                          flex: 2,
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Cancel'),
+                          ),
                         ),
                         const SizedBox(width: 12),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.check_rounded),
-                          label: Text(isEditing ? 'Save Changes' : 'Create Department'),
-                          onPressed: () async {
-                            final name = nameCtrl.text.trim();
-                            final code = codeCtrl.text.trim();
-                            if (name.isEmpty || code.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Name and Code are required')),
-                              );
-                              return;
-                            }
-
-                            final repo = ref.read(plantDepartmentsRepoProvider);
-                            if (isEditing) {
-                              await repo.update(
-                                dept.id,
-                                name: name,
-                                code: code,
-                                description: descCtrl.text.trim(),
-                                sections: sections,
-                                workTypes: workTypes,
-                              );
-                            } else {
-                              await repo.create(
-                                name: name,
-                                code: code,
-                                description: descCtrl.text.trim(),
-                                sections: sections,
-                                workTypes: workTypes,
-                              );
-                            }
-                            if (ctx.mounted) Navigator.pop(ctx, true);
-                          },
+                        Expanded(
+                          flex: 3,
+                          child: FilledButton.icon(
+                            icon: const Icon(Icons.check_rounded),
+                            label: Text(isEditing ? 'Save Changes' : 'Create Division'),
+                            onPressed: () => onSave(ctx),
+                          ),
                         ),
                       ],
                     ),

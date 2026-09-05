@@ -178,11 +178,12 @@ class _EquipmentEditDialogState extends ConsumerState<EquipmentEditDialog> {
     final isEditing = widget.equipment != null;
     final dept = _currentDepartment;
 
+    final screenHeight = MediaQuery.of(context).size.height;
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 580, maxHeight: 720),
+        constraints: BoxConstraints(maxWidth: 580, maxHeight: screenHeight * 0.85),
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Form(
@@ -197,24 +198,42 @@ class _EquipmentEditDialogState extends ConsumerState<EquipmentEditDialog> {
                       backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                       child: const Icon(Icons.precision_manufacturing_rounded, color: AppColors.primary),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            isEditing ? 'Edit Equipment & Nameplate' : 'Add Equipment',
+                            isEditing ? 'Edit Equipment' : 'Add Equipment',
                             style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            'Nameplate fields and values are fully customizable',
-                            style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                            'Nameplate specs are fully customizable',
+                            style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textSecondary, fontSize: 11),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
                     ),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      ),
+                      icon: _isSaving
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.check_rounded, size: 16),
+                      label: const Text('Save'),
+                      onPressed: _isSaving ? null : _save,
+                    ),
+                    const SizedBox(width: 4),
                     IconButton(
                       icon: const Icon(Icons.close),
+                      tooltip: 'Cancel',
                       onPressed: () => Navigator.pop(context),
                     ),
                   ],
@@ -405,23 +424,28 @@ class _EquipmentEditDialogState extends ConsumerState<EquipmentEditDialog> {
                 const Divider(height: 24),
                 // Actions
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel'),
+                    Expanded(
+                      flex: 2,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
                     ),
                     const SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      icon: _isSaving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.check_rounded),
-                      label: Text(isEditing ? 'Save Changes' : 'Create Equipment'),
-                      onPressed: _isSaving ? null : _save,
+                    Expanded(
+                      flex: 3,
+                      child: FilledButton.icon(
+                        icon: _isSaving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.check_rounded),
+                        label: Text(isEditing ? 'Save Changes' : 'Create Equipment'),
+                        onPressed: _isSaving ? null : _save,
+                      ),
                     ),
                   ],
                 ),

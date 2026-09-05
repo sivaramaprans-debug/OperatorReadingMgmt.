@@ -18,7 +18,6 @@ android/gradlew.bat
 android/local.properties
 android/key.properties
 android/app/debug.keystore
-android/app/release.keystore
 android/GeneratedPluginRegistrant.java
 
 # iOS / macOS
@@ -49,3 +48,4 @@ android/app/google-services.json
 google-service-account.json
 *.p12
 *.keystore
+!android/app/release.keystore
