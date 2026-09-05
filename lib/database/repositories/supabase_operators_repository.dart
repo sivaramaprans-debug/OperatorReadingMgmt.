@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import '../supabase_client.dart';
 import '../../core/utils/app_date_utils.dart';
@@ -12,6 +13,8 @@ class SupabaseOperator {
     required this.role,
     required this.isActive,
     required this.createdAt,
+    this.allottedDepartmentIds = const [],
+    this.allottedDepartmentNames = const [],
   });
 
   final String id;
@@ -21,16 +24,39 @@ class SupabaseOperator {
   final String role; // 'admin' | 'operator'
   final bool isActive;
   final int createdAt;
+  final List<String> allottedDepartmentIds;
+  final List<String> allottedDepartmentNames;
 
-  factory SupabaseOperator.fromMap(Map<String, dynamic> m) => SupabaseOperator(
-        id: m['id'] as String,
-        username: m['username'] as String,
-        fullName: m['full_name'] as String,
-        passwordHash: m['password_hash'] as String,
-        role: m['role'] as String? ?? 'operator',
-        isActive: m['is_active'] as bool? ?? true,
-        createdAt: m['created_at'] as int? ?? 0,
-      );
+  bool isAllottedTo(String deptId) {
+    if (role == 'admin') return true; // Admins have access to everything
+    return allottedDepartmentIds.contains(deptId);
+  }
+
+  factory SupabaseOperator.fromMap(Map<String, dynamic> m) {
+    List<String> parseList(dynamic raw) {
+      if (raw == null) return [];
+      if (raw is List) return raw.map((e) => e.toString()).toList();
+      if (raw is String) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List) return decoded.map((e) => e.toString()).toList();
+        } catch (_) {}
+      }
+      return [];
+    }
+
+    return SupabaseOperator(
+      id: m['id'] as String,
+      username: m['username'] as String,
+      fullName: m['full_name'] as String,
+      passwordHash: m['password_hash'] as String,
+      role: m['role'] as String? ?? 'operator',
+      isActive: m['is_active'] as bool? ?? true,
+      createdAt: m['created_at'] as int? ?? 0,
+      allottedDepartmentIds: parseList(m['allotted_department_ids']),
+      allottedDepartmentNames: parseList(m['allotted_department_names']),
+    );
+  }
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -40,6 +66,8 @@ class SupabaseOperator {
         'role': role,
         'is_active': isActive,
         'created_at': createdAt,
+        'allotted_department_ids': allottedDepartmentIds,
+        'allotted_department_names': allottedDepartmentNames,
       };
 }
 
@@ -74,9 +102,11 @@ class SupabaseOperatorsRepository {
     required String fullName,
     required String passwordHash,
     required String role,
+    List<String>? allottedDepartmentIds,
+    List<String>? allottedDepartmentNames,
   }) async {
     final now = AppDateUtils.nowUtcMs();
-    await supabase.from(_table).insert({
+    final row = <String, dynamic>{
       'id': _uuid.v4(),
       'username': username,
       'full_name': fullName,
@@ -84,7 +114,14 @@ class SupabaseOperatorsRepository {
       'role': role,
       'is_active': true,
       'created_at': now,
-    });
+    };
+    if (allottedDepartmentIds != null) {
+      row['allotted_department_ids'] = allottedDepartmentIds;
+    }
+    if (allottedDepartmentNames != null) {
+      row['allotted_department_names'] = allottedDepartmentNames;
+    }
+    await supabase.from(_table).insert(row);
   }
 
   Future<void> updatePasswordHash(String id, String newHash) async {
@@ -95,10 +132,22 @@ class SupabaseOperatorsRepository {
     await supabase.from(_table).update({'is_active': active}).eq('id', id);
   }
 
-  Future<void> update(String id, {String? fullName, String? username}) async {
+  Future<void> update(
+    String id, {
+    String? fullName,
+    String? username,
+    List<String>? allottedDepartmentIds,
+    List<String>? allottedDepartmentNames,
+  }) async {
     final updates = <String, dynamic>{};
     if (fullName != null) updates['full_name'] = fullName;
     if (username != null) updates['username'] = username;
+    if (allottedDepartmentIds != null) {
+      updates['allotted_department_ids'] = allottedDepartmentIds;
+    }
+    if (allottedDepartmentNames != null) {
+      updates['allotted_department_names'] = allottedDepartmentNames;
+    }
     if (updates.isNotEmpty) {
       await supabase.from(_table).update(updates).eq('id', id);
     }

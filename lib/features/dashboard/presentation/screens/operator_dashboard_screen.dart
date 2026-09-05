@@ -144,6 +144,16 @@ class _OperatorDashboardScreenState extends ConsumerState<OperatorDashboardScree
                 ),
                 onPressed: () => context.push(RoutePaths.logSheets),
               ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.precision_manufacturing_outlined),
+                label: const Text('Division Equipments & Nameplates'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.all(20),
+                  textStyle: theme.textTheme.titleMedium,
+                ),
+                onPressed: () => context.push(RoutePaths.plantEquipments),
+              ),
             ],
           ),
         ),

@@ -144,6 +144,16 @@ class _AdminOperatorDetailScreenState extends ConsumerState<AdminOperatorDetailS
             _buildDetailRow(context, Icons.calendar_today_rounded, 'Created', 
                 DateTime.fromMillisecondsSinceEpoch(op.createdAt, isUtc: true).toLocal().toString().split('.')[0]),
 
+            if (op.allottedDepartmentNames.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildDetailRow(
+                context,
+                Icons.apartment_rounded,
+                'Allotted Divisions',
+                op.allottedDepartmentNames.join(', '),
+              ),
+            ],
+
             const SizedBox(height: 40),
 
             AppButton(

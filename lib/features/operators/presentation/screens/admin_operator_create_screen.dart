@@ -5,6 +5,7 @@ import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/snackbar_helper.dart';
 import '../../../../shared/widgets/form_container.dart';
 import '../../../devices/presentation/notifiers/devices_list_notifier.dart';
+import '../../../logsheet/presentation/notifiers/plant_logsheet_providers.dart';
 import '../notifiers/operator_form_notifier.dart';
 
 class AdminOperatorCreateScreen extends ConsumerStatefulWidget {
@@ -22,6 +23,7 @@ class _AdminOperatorCreateScreenState extends ConsumerState<AdminOperatorCreateS
 
   bool _obscurePassword = true;
   final Set<String> _selectedDeviceIds = {};
+  final Set<String> _selectedDepartmentIds = {};
 
   @override
   void dispose() {
@@ -34,12 +36,20 @@ class _AdminOperatorCreateScreenState extends ConsumerState<AdminOperatorCreateS
 
   Future<void> _onSubmit() async {
     final notifier = ref.read(operatorFormNotifierProvider.notifier);
+    final allDepts = ref.read(allPlantDepartmentsProvider).value ?? [];
+    final selectedNames = allDepts
+        .where((d) => _selectedDepartmentIds.contains(d.id))
+        .map((d) => d.name)
+        .toList();
+
     await notifier.createOperator(
       fullName: _nameController.text,
       username: _usernameController.text,
       password: _passwordController.text,
       phoneNumber: _phoneController.text,
       assignedDeviceIds: _selectedDeviceIds.toList(),
+      allottedDepartmentIds: _selectedDepartmentIds.toList(),
+      allottedDepartmentNames: selectedNames,
     );
 
     if (!mounted) return;
@@ -161,6 +171,55 @@ class _AdminOperatorCreateScreenState extends ConsumerState<AdminOperatorCreateS
                   ),
                 ),
                 
+            const SizedBox(height: 24),
+
+            Text(
+              'Allot Plant Divisions / Departments',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Operator will only see logs and equipments for their allotted divisions.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 12),
+            ref.watch(allPlantDepartmentsProvider).when(
+                  data: (departments) {
+                    if (departments.isEmpty) {
+                      return const Text('No divisions available. Go to Manage Departments to add.');
+                    }
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: departments.map((dept) {
+                        final isSelected = _selectedDepartmentIds.contains(dept.id);
+                        return FilterChip(
+                          avatar: isSelected ? null : const Icon(Icons.business_outlined, size: 16),
+                          label: Text('${dept.name} (${dept.code})'),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedDepartmentIds.add(dept.id);
+                              } else {
+                                _selectedDepartmentIds.remove(dept.id);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    );
+                  },
+                  loading: () => const Align(
+                    alignment: Alignment.centerLeft,
+                    child: CircularProgressIndicator(),
+                  ),
+                  error: (err, _) => Text(
+                    'Error loading divisions: $err',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ),
+
             const SizedBox(height: 40),
             
             AppButton(

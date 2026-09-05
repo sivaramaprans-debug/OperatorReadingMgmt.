@@ -24,6 +24,8 @@ class CreateOperatorUseCase {
     required String password,
     required String phoneNumber,
     required List<String> assignedDeviceIds,
+    List<String> allottedDepartmentIds = const [],
+    List<String> allottedDepartmentNames = const [],
   }) async {
     // 1. Validate inputs
     final nameErr = Validators.fullName(fullName);
@@ -53,6 +55,8 @@ class CreateOperatorUseCase {
         fullName: fullName.trim(),
         passwordHash: hash,
         role: 'operator',
+        allottedDepartmentIds: allottedDepartmentIds,
+        allottedDepartmentNames: allottedDepartmentNames,
       );
       
       final createdUser = await operatorsRepo.findByUsername(username.trim());

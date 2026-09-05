@@ -14,6 +14,8 @@ class SupabaseLogSheetRepository {
 
   /// Fetch log sheet records with optional filters.
   Future<List<LogSheetEntry>> getAll({
+    String? departmentId,
+    List<String>? departmentIds,
     String? operatorId,
     String? section,
     String? workType,
@@ -23,6 +25,12 @@ class SupabaseLogSheetRepository {
   }) async {
     try {
       var query = supabase.from(_table).select();
+
+      if (departmentId != null && departmentId.isNotEmpty && departmentId != 'All') {
+        query = query.eq('department_id', departmentId);
+      } else if (departmentIds != null && departmentIds.isNotEmpty) {
+        query = query.inFilter('department_id', departmentIds);
+      }
 
       if (operatorId != null && operatorId.isNotEmpty) {
         query = query.eq('operator_id', operatorId);
@@ -52,19 +60,23 @@ class SupabaseLogSheetRepository {
 
   /// Insert a new log entry.
   Future<String> insert({
+    String? departmentId,
+    String? departmentName,
     required String operatorId,
     required String operatorName,
     required String section,
     required int logDate,
     required String workType,
-    required String equipmentType,
+    String? equipmentId,
+    String equipmentType = '',
+    String? nameplateSnapshot,
     required String description,
     String? imageUrl,
   }) async {
     final id = _uuid.v4();
     final now = AppDateUtils.nowUtcMs();
 
-    await supabase.from(_table).insert({
+    final row = <String, dynamic>{
       'id': id,
       'operator_id': operatorId,
       'operator_name': operatorName,
@@ -75,8 +87,22 @@ class SupabaseLogSheetRepository {
       'description': description,
       'image_url': imageUrl,
       'created_at': now,
-    });
+    };
 
+    if (departmentId != null && departmentId.isNotEmpty) {
+      row['department_id'] = departmentId;
+    }
+    if (departmentName != null && departmentName.isNotEmpty) {
+      row['department_name'] = departmentName;
+    }
+    if (equipmentId != null && equipmentId.isNotEmpty) {
+      row['equipment_id'] = equipmentId;
+    }
+    if (nameplateSnapshot != null && nameplateSnapshot.isNotEmpty) {
+      row['nameplate_snapshot'] = nameplateSnapshot;
+    }
+
+    await supabase.from(_table).insert(row);
     return id;
   }
 

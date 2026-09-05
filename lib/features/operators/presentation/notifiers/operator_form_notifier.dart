@@ -63,6 +63,8 @@ class OperatorFormNotifier extends AutoDisposeNotifier<OperatorFormState> {
     required String password,
     required String phoneNumber,
     required List<String> assignedDeviceIds,
+    List<String> allottedDepartmentIds = const [],
+    List<String> allottedDepartmentNames = const [],
   }) async {
     state = state.copyWith(isLoading: true, error: null);
     
@@ -80,6 +82,8 @@ class OperatorFormNotifier extends AutoDisposeNotifier<OperatorFormState> {
       password: password,
       phoneNumber: phoneNumber,
       assignedDeviceIds: assignedDeviceIds,
+      allottedDepartmentIds: allottedDepartmentIds,
+      allottedDepartmentNames: allottedDepartmentNames,
     );
 
     if (failure != null) {
@@ -97,6 +101,8 @@ class OperatorFormNotifier extends AutoDisposeNotifier<OperatorFormState> {
     required String username,
     required String phoneNumber,
     required List<String> assignedDeviceIds,
+    List<String>? allottedDepartmentIds,
+    List<String>? allottedDepartmentNames,
   }) async {
     state = state.copyWith(isLoading: true, error: null);
     
@@ -114,6 +120,8 @@ class OperatorFormNotifier extends AutoDisposeNotifier<OperatorFormState> {
       username: username,
       phoneNumber: phoneNumber,
       assignedDeviceIds: assignedDeviceIds,
+      allottedDepartmentIds: allottedDepartmentIds,
+      allottedDepartmentNames: allottedDepartmentNames,
     );
 
     if (failure != null || !success) {

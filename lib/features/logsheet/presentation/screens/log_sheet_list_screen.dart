@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +10,8 @@ import '../../../../shared/widgets/loading_widget.dart';
 import '../../../auth/presentation/notifiers/auth_notifier.dart';
 import '../../data/repositories/supabase_log_sheet_repository.dart';
 import '../../domain/models/log_sheet_entry.dart';
+import '../../domain/models/plant_department.dart';
+import '../notifiers/plant_logsheet_providers.dart';
 import '../widgets/interactive_image_viewer.dart';
 
 class LogSheetListScreen extends ConsumerStatefulWidget {
@@ -19,63 +22,40 @@ class LogSheetListScreen extends ConsumerStatefulWidget {
 }
 
 class _LogSheetListScreenState extends ConsumerState<LogSheetListScreen> {
+  String? _selectedDepartmentId;
   String _selectedSection = 'All';
   String _selectedWorkType = 'All';
   String _searchQuery = '';
   final _searchController = TextEditingController();
 
-  final List<String> _sections = [
-    'All',
-    'Furnace / Induction',
-    'CCM',
-    'Rolling Mill',
-    'Dedusting / Pollution',
-    'Water Treatment',
-    'Electrical Substation',
-    'Utility / Compressor',
-    'General Plant',
-  ];
-
+  final List<String> _sections = ['All'];
   final List<String> _workTypes = [
     'All',
-    'Operation',
-    'Inspection',
     'Breakdown Repair',
+    'Preventive Maintenance',
+    'Inspection',
     'Cleaning / Routine',
-    'Maintenance',
     'Electrical',
     'Mechanical',
+    'Operation',
     'Other',
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadFilters();
-  }
-
-  Future<void> _loadFilters() async {
-    try {
-      final repo = ref.read(supabaseLogSheetRepoProvider);
-      final secList = await repo.getSectionSuggestions();
-      final wtList = await repo.getWorkTypeSuggestions();
-      if (mounted) {
-        setState(() {
-          for (final s in secList) {
-            if (!_sections.contains(s)) _sections.add(s);
-          }
-          for (final wt in wtList) {
-            if (!_workTypes.contains(wt)) _workTypes.add(wt);
-          }
-        });
-      }
-    } catch (_) {}
-  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _syncDepartmentOptions(PlantDepartment? dept) {
+    if (dept != null && dept.sections.isNotEmpty) {
+      for (final s in dept.sections) {
+        if (!_sections.contains(s)) _sections.add(s);
+      }
+      for (final wt in dept.workTypes) {
+        if (!_workTypes.contains(wt)) _workTypes.add(wt);
+      }
+    }
   }
 
   @override
@@ -84,20 +64,30 @@ class _LogSheetListScreenState extends ConsumerState<LogSheetListScreen> {
     final user = ref.watch(authNotifierProvider.notifier).currentUser;
     final isAdmin = user?.role == 'admin';
 
-    final logsAsync = ref.watch(logSheetsListProvider((
-      operatorId: isAdmin ? null : user?.id,
-      section: _selectedSection == 'All' ? null : _selectedSection,
-      workType: _selectedWorkType == 'All' ? null : _selectedWorkType,
-    )));
+    final userDeptsAsync = ref.watch(userAvailableDepartmentsProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isAdmin ? 'All Plant Log Sheets' : 'My Section Log Sheets'),
+        title: Text(isAdmin ? 'Plant Log Sheets (All Divisions)' : 'Division Log Sheets'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.precision_manufacturing_outlined),
+            tooltip: 'Equipments & Nameplates',
+            onPressed: () => context.push(RoutePaths.plantEquipments),
+          ),
+          if (isAdmin)
+            IconButton(
+              icon: const Icon(Icons.apartment_rounded),
+              tooltip: 'Manage Departments',
+              onPressed: () => context.push(RoutePaths.adminDepartments),
+            ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
-            onPressed: () => ref.invalidate(logSheetsListProvider),
+            onPressed: () {
+              ref.invalidate(plantLogSheetsListProvider);
+              ref.invalidate(userAvailableDepartmentsProvider);
+            },
           ),
         ],
       ),
@@ -106,159 +96,227 @@ class _LogSheetListScreenState extends ConsumerState<LogSheetListScreen> {
         icon: const Icon(Icons.add_rounded),
         label: const Text('Add Log Entry'),
       ),
-      body: Column(
-        children: [
-          // Filter Bar
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
-            child: Column(
-              children: [
-                // Search Input
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search equipment, description, operator...',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear_rounded),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() => _searchQuery = '');
-                            },
-                          )
-                        : null,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  ),
-                  onChanged: (val) => setState(() => _searchQuery = val.trim().toLowerCase()),
-                ),
-                const SizedBox(height: 10),
+      body: userDeptsAsync.when(
+        loading: () => const LoadingWidget(message: 'Loading plant divisions...'),
+        error: (e, _) => Center(child: Text('Error loading divisions: $e')),
+        data: (departments) {
+          // If operator has only 1 division, lock to that division
+          if (!isAdmin && departments.isNotEmpty && _selectedDepartmentId == null) {
+            _selectedDepartmentId = departments.first.id;
+          }
 
-                // Section & Work Type Filters
-                Row(
+          final currentDept = departments.where((d) => d.id == _selectedDepartmentId).firstOrNull;
+          _syncDepartmentOptions(currentDept);
+
+          final filterArgs = LogSheetFilterArgs(
+            departmentId: _selectedDepartmentId,
+            departmentIds: (!isAdmin && _selectedDepartmentId == null && departments.isNotEmpty)
+                ? departments.map((d) => d.id).toList()
+                : null,
+            section: _selectedSection == 'All' ? null : _selectedSection,
+            workType: _selectedWorkType == 'All' ? null : _selectedWorkType,
+          );
+
+          final logsAsync = ref.watch(plantLogSheetsListProvider(filterArgs));
+
+          return Column(
+            children: [
+              // Top Filter Bar
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                child: Column(
                   children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _selectedSection,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Section',
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    // Department Selector
+                    Row(
+                      children: [
+                        const Icon(Icons.business_rounded, size: 20, color: AppColors.primary),
+                        const SizedBox(width: 8),
+                        const Text('Division: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                        Expanded(
+                          child: DropdownButton<String?>(
+                            isExpanded: true,
+                            value: _selectedDepartmentId,
+                            underline: const SizedBox(),
+                            items: [
+                              if (isAdmin)
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('All Divisions (Whole Plant)', style: TextStyle(fontWeight: FontWeight.bold)),
+                                ),
+                              ...departments.map((d) {
+                                return DropdownMenuItem<String?>(
+                                  value: d.id,
+                                  child: Text(
+                                    '${d.name} (${d.code})',
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                );
+                              }),
+                            ],
+                            onChanged: (val) {
+                              setState(() {
+                                _selectedDepartmentId = val;
+                                _selectedSection = 'All';
+                              });
+                            },
+                          ),
                         ),
-                        items: _sections
-                            .map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)))
-                            .toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => _selectedSection = val);
-                        },
-                      ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _selectedWorkType,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Work Type',
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        ),
-                        items: _workTypes
-                            .map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)))
-                            .toList(),
-                        onChanged: (val) {
-                          if (val != null) setState(() => _selectedWorkType = val);
-                        },
+                    const SizedBox(height: 8),
+
+                    // Search Input
+                    TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search equipment, issue description, operator...',
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        suffixIcon: _searchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear_rounded),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _searchQuery = '');
+                                },
+                              )
+                            : null,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                       ),
+                      onChanged: (val) => setState(() => _searchQuery = val.trim().toLowerCase()),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Section & Work Type Filters
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _selectedSection,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Section',
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            ),
+                            items: _sections
+                                .map((s) => DropdownMenuItem(
+                                      value: s,
+                                      child: Text(s, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                                    ))
+                                .toList(),
+                            onChanged: (val) {
+                              if (val != null) setState(() => _selectedSection = val);
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _selectedWorkType,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Work Type',
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            ),
+                            items: _workTypes
+                                .map((t) => DropdownMenuItem(
+                                      value: t,
+                                      child: Text(t, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                                    ))
+                                .toList(),
+                            onChanged: (val) {
+                              if (val != null) setState(() => _selectedWorkType = val);
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
+              ),
 
-          // Log List
-          Expanded(
-            child: logsAsync.when(
-              loading: () => const LoadingWidget(message: 'Loading log sheets...'),
-              error: (e, _) {
-                final err = e.toString();
-                final isTableMissing = err.contains('PGRST205') || err.contains('schema cache') || err.contains('not find the table');
-                return EmptyStateWidget(
-                  icon: Icons.table_chart_outlined,
-                  title: isTableMissing ? 'Log Sheet Setup Required' : 'Unable to Load Logs',
-                  subtitle: isTableMissing
-                      ? 'The log_sheets table needs to be created in Supabase SQL editor once.\nCheck the SQL setup instructions.'
-                      : 'Error: $e',
-                  actionLabel: 'Try Again',
-                  action: () => ref.invalidate(logSheetsListProvider),
-                );
-              },
-              data: (logs) {
-                var filtered = logs;
-                if (_searchQuery.isNotEmpty) {
-                  filtered = filtered.where((l) =>
-                      l.equipmentType.toLowerCase().contains(_searchQuery) ||
-                      l.description.toLowerCase().contains(_searchQuery) ||
-                      l.operatorName.toLowerCase().contains(_searchQuery) ||
-                      l.section.toLowerCase().contains(_searchQuery) ||
-                      l.workType.toLowerCase().contains(_searchQuery)).toList();
-                }
-
-                if (filtered.isEmpty) {
-                  return EmptyStateWidget(
-                    icon: Icons.article_outlined,
-                    title: 'No Log Entries Found',
-                    subtitle: 'Tap the button below to add your first log sheet entry.',
-                    actionLabel: 'Add Log Entry',
-                    action: () => context.push(RoutePaths.logSheetAdd),
-                  );
-                }
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: filtered.length + 1, // extra padding for FAB
-                  itemBuilder: (context, index) {
-                    if (index == filtered.length) {
-                      return const SizedBox(height: 72);
+              // Log List
+              Expanded(
+                child: logsAsync.when(
+                  loading: () => const LoadingWidget(message: 'Loading log sheets...'),
+                  error: (e, _) {
+                    return EmptyStateWidget(
+                      icon: Icons.table_chart_outlined,
+                      title: 'Unable to Load Logs',
+                      subtitle: 'Error: $e',
+                      actionLabel: 'Try Again',
+                      action: () => ref.invalidate(plantLogSheetsListProvider),
+                    );
+                  },
+                  data: (logs) {
+                    var filtered = logs;
+                    if (_searchQuery.isNotEmpty) {
+                      filtered = filtered.where((l) =>
+                          l.equipmentType.toLowerCase().contains(_searchQuery) ||
+                          l.description.toLowerCase().contains(_searchQuery) ||
+                          l.operatorName.toLowerCase().contains(_searchQuery) ||
+                          l.section.toLowerCase().contains(_searchQuery) ||
+                          l.workType.toLowerCase().contains(_searchQuery) ||
+                          (l.departmentName ?? '').toLowerCase().contains(_searchQuery)).toList();
                     }
-                    final entry = filtered[index];
-                    return _LogSheetCard(
-                      entry: entry,
-                      canDelete: isAdmin || entry.operatorId == user?.id,
-                      onDelete: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('Delete Log Entry'),
-                            content: const Text('Are you sure you want to delete this log sheet record?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirm == true) {
-                          await ref.read(supabaseLogSheetRepoProvider).delete(entry.id);
-                          ref.invalidate(logSheetsListProvider);
+
+                    if (filtered.isEmpty) {
+                      return EmptyStateWidget(
+                        icon: Icons.article_outlined,
+                        title: 'No Log Entries Found',
+                        subtitle: 'Tap the button below to add your first plant log sheet or breakdown entry.',
+                        actionLabel: 'Add Log Entry',
+                        action: () => context.push(RoutePaths.logSheetAdd),
+                      );
+                    }
+
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: filtered.length + 1, // extra padding for FAB
+                      itemBuilder: (context, index) {
+                        if (index == filtered.length) {
+                          return const SizedBox(height: 72);
                         }
+                        final entry = filtered[index];
+                        return _LogSheetCard(
+                          entry: entry,
+                          canDelete: isAdmin || entry.operatorId == user?.id,
+                          onDelete: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Delete Log Entry'),
+                                content: const Text('Are you sure you want to delete this log sheet record?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              await ref.read(supabaseLogSheetRepoProvider).delete(entry.id);
+                              ref.invalidate(plantLogSheetsListProvider);
+                            }
+                          },
+                        );
                       },
                     );
                   },
-                );
-              },
-            ),
-          ),
-        ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -280,12 +338,16 @@ class _LogSheetCard extends StatelessWidget {
     final theme = Theme.of(context);
     final logDate = DateTime.fromMillisecondsSinceEpoch(entry.logDate, isUtc: true).toLocal();
     final dateStr = DateFormat('dd MMM yyyy, hh:mm a').format(logDate);
+    final isBreakdown = entry.workType.toLowerCase().contains('breakdown');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
+        side: BorderSide(
+          color: isBreakdown ? Colors.red.shade200 : theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+          width: isBreakdown ? 1.5 : 1,
+        ),
       ),
       elevation: 0,
       child: Padding(
@@ -293,36 +355,54 @@ class _LogSheetCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top Row: Section & Work Type Chips + Delete
+            // Top Row: Department & Section & Work Type Chips + Delete
             Row(
               children: [
+                if (entry.departmentName != null && entry.departmentName!.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      entry.departmentName!,
+                      style: const TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: AppColors.primaryContainer,
+                    color: theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     entry.section,
                     style: TextStyle(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
                       fontSize: 11,
                     ),
                   ),
                 ),
                 const SizedBox(width: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.secondaryContainer,
+                    color: isBreakdown ? Colors.red.shade50 : theme.colorScheme.secondaryContainer,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     entry.workType,
                     style: TextStyle(
-                      color: theme.colorScheme.onSecondaryContainer,
-                      fontWeight: FontWeight.w600,
+                      color: isBreakdown ? Colors.red.shade800 : theme.colorScheme.onSecondaryContainer,
+                      fontWeight: FontWeight.bold,
                       fontSize: 11,
                     ),
                   ),
@@ -346,21 +426,35 @@ class _LogSheetCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
 
-            // Equipment Type
+            // Equipment or General Breakdown Indicator
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.precision_manufacturing_rounded, size: 20, color: AppColors.primary),
+                Icon(
+                  entry.hasEquipment ? Icons.precision_manufacturing_rounded : Icons.report_problem_outlined,
+                  size: 20,
+                  color: entry.hasEquipment ? AppColors.primary : (isBreakdown ? Colors.red : Colors.orange),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    entry.equipmentType,
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    entry.hasEquipment ? entry.equipmentType : 'General / Plant Line Breakdown (No specific equipment)',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: entry.hasEquipment ? null : (isBreakdown ? Colors.red.shade800 : Colors.orange.shade900),
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+
+            // Nameplate Snapshot (if saved with equipment)
+            if (entry.nameplateSnapshot != null && entry.nameplateSnapshot!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _NameplateSnapshotView(rawSnapshot: entry.nameplateSnapshot!),
+            ],
+
+            const SizedBox(height: 10),
 
             // Description
             Text(
@@ -376,16 +470,16 @@ class _LogSheetCard extends StatelessWidget {
                   InteractiveImageViewer.show(
                     context,
                     imageUrl: entry.imageUrl!,
-                    title: entry.equipmentType,
+                    title: entry.hasEquipment ? entry.equipmentType : 'General Breakdown',
                     subtitle: '${entry.section} • $dateStr',
                   );
                 },
                 child: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
+                    border: Border.all(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5)),
                   ),
                   child: Row(
                     children: [
@@ -442,7 +536,10 @@ class _LogSheetCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Text(
                   'Logged by: ${entry.operatorName}',
-                  style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurfaceVariant),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -450,5 +547,35 @@ class _LogSheetCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _NameplateSnapshotView extends StatelessWidget {
+  const _NameplateSnapshotView({required this.rawSnapshot});
+  final String rawSnapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    try {
+      final decoded = jsonDecode(rawSnapshot);
+      if (decoded is List) {
+        final specs = decoded.whereType<Map>().map((m) => '${m['key']}: ${m['value']}').take(5).join(' • ');
+        if (specs.isEmpty) return const SizedBox();
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            'Specs: $specs',
+            style: theme.textTheme.bodySmall?.copyWith(fontSize: 11, color: AppColors.textSecondary),
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      }
+    } catch (_) {}
+    return const SizedBox();
   }
 }

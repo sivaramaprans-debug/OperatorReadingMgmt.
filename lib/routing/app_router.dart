@@ -27,6 +27,8 @@ import '../features/readings/presentation/screens/dedusting_readings_screen.dart
 import '../features/readings/presentation/screens/water_readings_screen.dart';
 import '../features/logsheet/presentation/screens/log_sheet_list_screen.dart';
 import '../features/logsheet/presentation/screens/log_sheet_add_screen.dart';
+import '../features/logsheet/presentation/screens/admin_departments_screen.dart';
+import '../features/logsheet/presentation/screens/plant_equipments_screen.dart';
 import '../features/settings/presentation/screens/settings_screen.dart';
 import '../database/repositories/supabase_operators_repository.dart';
 import '../database/repositories/supabase_devices_repository.dart';
@@ -345,6 +347,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           context,
           state,
           const LogSheetAddScreen(),
+        ),
+      ),
+      GoRoute(
+        path: RoutePaths.adminDepartments,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const AdminDepartmentsScreen(),
+        ),
+      ),
+      GoRoute(
+        path: RoutePaths.plantEquipments,
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context,
+          state,
+          const PlantEquipmentsScreen(),
         ),
       ),
     ],

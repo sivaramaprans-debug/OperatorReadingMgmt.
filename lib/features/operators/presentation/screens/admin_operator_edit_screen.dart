@@ -9,6 +9,7 @@ import '../../../../shared/widgets/snackbar_helper.dart';
 import '../../../../shared/widgets/form_container.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../devices/presentation/notifiers/devices_list_notifier.dart';
+import '../../../logsheet/presentation/notifiers/plant_logsheet_providers.dart';
 import '../notifiers/operator_form_notifier.dart';
 
 class AdminOperatorEditScreen extends ConsumerStatefulWidget {
@@ -26,6 +27,7 @@ class _AdminOperatorEditScreenState extends ConsumerState<AdminOperatorEditScree
   late final TextEditingController _usernameController;
   late final TextEditingController _phoneController;
   final Set<String> _selectedDeviceIds = {};
+  final Set<String> _selectedDepartmentIds = {};
   bool _initializedDevices = false;
 
   @override
@@ -35,6 +37,9 @@ class _AdminOperatorEditScreenState extends ConsumerState<AdminOperatorEditScree
     _nameController = TextEditingController(text: op?.fullName ?? '');
     _usernameController = TextEditingController(text: op?.username ?? '');
     _phoneController = TextEditingController(text: '');
+    if (op != null && op.allottedDepartmentIds.isNotEmpty) {
+      _selectedDepartmentIds.addAll(op.allottedDepartmentIds);
+    }
     
     _fetchAssignedDevices();
   }
@@ -42,6 +47,15 @@ class _AdminOperatorEditScreenState extends ConsumerState<AdminOperatorEditScree
   Future<void> _fetchAssignedDevices() async {
     final devicesRepo = ref.read(supabaseDevicesRepoProvider);
     final assignments = await devicesRepo.getAssignedToOperator(widget.operatorId);
+
+    // If operator was passed without allotted departments, fetch operator record
+    if (widget.operator == null || widget.operator!.allottedDepartmentIds.isEmpty) {
+      final op = await ref.read(supabaseOperatorsRepoProvider).findById(widget.operatorId);
+      if (op != null && op.allottedDepartmentIds.isNotEmpty) {
+        _selectedDepartmentIds.addAll(op.allottedDepartmentIds);
+      }
+    }
+
     if (mounted) {
       setState(() {
         _selectedDeviceIds.addAll(assignments.map((e) => e.id));
@@ -60,12 +74,20 @@ class _AdminOperatorEditScreenState extends ConsumerState<AdminOperatorEditScree
 
   Future<void> _onSubmit() async {
     final notifier = ref.read(operatorFormNotifierProvider.notifier);
+    final allDepts = ref.read(allPlantDepartmentsProvider).value ?? [];
+    final selectedNames = allDepts
+        .where((d) => _selectedDepartmentIds.contains(d.id))
+        .map((d) => d.name)
+        .toList();
+
     await notifier.editOperator(
       operatorId: widget.operatorId,
       fullName: _nameController.text,
       username: _usernameController.text,
       phoneNumber: _phoneController.text,
       assignedDeviceIds: _selectedDeviceIds.toList(),
+      allottedDepartmentIds: _selectedDepartmentIds.toList(),
+      allottedDepartmentNames: selectedNames,
     );
 
     if (!mounted) return;
@@ -171,6 +193,55 @@ class _AdminOperatorEditScreenState extends ConsumerState<AdminOperatorEditScree
                   error: (err, _) => Text('Error loading devices: $err'),
                 ),
             
+            const SizedBox(height: 24),
+
+            Text(
+              'Allot Plant Divisions / Departments',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Operator will only see logs and equipments for their allotted divisions.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 12),
+            ref.watch(allPlantDepartmentsProvider).when(
+                  data: (departments) {
+                    if (departments.isEmpty) {
+                      return const Text('No divisions available. Go to Manage Departments to add.');
+                    }
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: departments.map((dept) {
+                        final isSelected = _selectedDepartmentIds.contains(dept.id);
+                        return FilterChip(
+                          avatar: isSelected ? null : const Icon(Icons.business_outlined, size: 16),
+                          label: Text('${dept.name} (${dept.code})'),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedDepartmentIds.add(dept.id);
+                              } else {
+                                _selectedDepartmentIds.remove(dept.id);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    );
+                  },
+                  loading: () => const Align(
+                    alignment: Alignment.centerLeft,
+                    child: CircularProgressIndicator(),
+                  ),
+                  error: (err, _) => Text(
+                    'Error loading divisions: $err',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ),
+
             const SizedBox(height: 40),
             
             AppButton(

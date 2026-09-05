@@ -23,6 +23,8 @@ class EditOperatorUseCase {
     required String username,
     required String phoneNumber,
     required List<String> assignedDeviceIds,
+    List<String>? allottedDepartmentIds,
+    List<String>? allottedDepartmentNames,
   }) async {
     // 1. Validate inputs
     final nameErr = Validators.fullName(fullName);
@@ -54,6 +56,8 @@ class EditOperatorUseCase {
         operatorId,
         fullName: fullName.trim(),
         username: username.trim(),
+        allottedDepartmentIds: allottedDepartmentIds,
+        allottedDepartmentNames: allottedDepartmentNames,
       );
 
       // Update assigned devices

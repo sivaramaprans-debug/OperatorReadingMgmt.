@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -8,9 +9,14 @@ import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/form_container.dart';
+import '../../../../shared/widgets/loading_widget.dart';
 import '../../../../shared/widgets/snackbar_helper.dart';
 import '../../../auth/presentation/notifiers/auth_notifier.dart';
 import '../../data/repositories/supabase_log_sheet_repository.dart';
+import '../../domain/models/plant_department.dart';
+import '../../domain/models/plant_equipment.dart';
+import '../notifiers/plant_logsheet_providers.dart';
+import '../widgets/equipment_edit_dialog.dart';
 
 class LogSheetAddScreen extends ConsumerStatefulWidget {
   const LogSheetAddScreen({super.key});
@@ -22,86 +28,37 @@ class LogSheetAddScreen extends ConsumerStatefulWidget {
 class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
-  
-  String _selectedSection = 'Furnace / Induction';
+
+  String? _selectedDepartmentId;
+  String _selectedSection = 'General';
   bool _isCustomSection = false;
   final _customSectionController = TextEditingController();
 
-  String _selectedWorkType = 'Operation';
-  final List<String> _availableWorkTypes = [
-    'Operation',
-    'Inspection',
-    'Breakdown Repair',
-    'Cleaning / Routine',
-    'Maintenance',
-    'Electrical',
-    'Mechanical',
-    'Other',
-  ];
+  String _selectedWorkType = 'Breakdown Repair';
+  bool _isCustomWorkType = false;
+  final _customWorkTypeController = TextEditingController();
 
-  final List<String> _availableSections = [
-    'Furnace / Induction',
-    'CCM',
-    'Rolling Mill',
-    'Dedusting / Pollution',
-    'Water Treatment',
-    'Electrical Substation',
-    'Utility / Compressor',
-    'General Plant',
-  ];
+  // Equipment selection
+  bool _hasSpecificEquipment = false;
+  PlantEquipment? _selectedEquipment;
 
-  final _equipmentController = TextEditingController();
   final _descriptionController = TextEditingController();
 
   Uint8List? _pickedImageBytes;
   String? _pickedImageName;
   bool _isSubmitting = false;
-  List<String> _equipmentSuggestions = [];
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _selectedTime = TimeOfDay.now();
-    _loadAllSuggestions();
-  }
-
-  Future<void> _loadAllSuggestions() async {
-    try {
-      final repo = ref.read(supabaseLogSheetRepoProvider);
-      final eqList = await repo.getEquipmentSuggestions(_effectiveSection);
-      final secList = await repo.getSectionSuggestions();
-      final wtList = await repo.getWorkTypeSuggestions();
-
-      if (mounted) {
-        setState(() {
-          _equipmentSuggestions = eqList;
-          for (final s in secList) {
-            if (!_availableSections.contains(s)) {
-              _availableSections.add(s);
-            }
-          }
-          for (final wt in wtList) {
-            if (!_availableWorkTypes.contains(wt)) {
-              _availableWorkTypes.add(wt);
-            }
-          }
-        });
-      }
-    } catch (_) {}
-  }
-
-  String get _effectiveSection {
-    if (_isCustomSection) {
-      return _customSectionController.text.trim();
-    }
-    return _selectedSection;
   }
 
   @override
   void dispose() {
     _customSectionController.dispose();
-    _equipmentController.dispose();
+    _customWorkTypeController.dispose();
     _descriptionController.dispose();
     super.dispose();
   }
@@ -127,457 +84,574 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
       }
     } catch (e) {
       if (mounted) {
-        SnackbarHelper.showError(context, 'Could not select image: $e');
+        SnackbarHelper.showError(context, 'Failed to pick image: $e');
       }
     }
   }
 
-  void _promptAddCustomWorkType() {
-    final textController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Custom Work Type'),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Refractory Relining, Calibration',
-            labelText: 'Work Type Name',
-          ),
-          textCapitalization: TextCapitalization.words,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final text = textController.text.trim();
-              if (text.isNotEmpty) {
-                setState(() {
-                  if (!_availableWorkTypes.contains(text)) {
-                    _availableWorkTypes.insert(_availableWorkTypes.length - 1, text);
-                  }
-                  _selectedWorkType = text;
-                });
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Add & Select'),
-          ),
-        ],
-      ),
+  void _openAddNewEquipment(List<PlantDepartment> departments) async {
+    final result = await EquipmentEditDialog.show(
+      context,
+      departments: departments,
+      initialDepartmentId: _selectedDepartmentId,
+      initialSection: _selectedSection,
     );
+
+    if (result != null && mounted) {
+      ref.invalidate(plantEquipmentsProvider);
+      setState(() {
+        _hasSpecificEquipment = true;
+        _selectedEquipment = result;
+        _selectedDepartmentId = result.departmentId;
+        _selectedSection = result.section;
+      });
+      SnackbarHelper.showSuccess(context, 'Equipment "${result.name}" added and selected');
+    }
   }
 
-  void _promptAddCustomSection() {
-    final textController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Custom Section / Area'),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'e.g. SMS4 Refractory, Yard',
-            labelText: 'Section Name',
-          ),
-          textCapitalization: TextCapitalization.words,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final text = textController.text.trim();
-              if (text.isNotEmpty) {
-                setState(() {
-                  if (!_availableSections.contains(text)) {
-                    _availableSections.add(text);
-                  }
-                  _selectedSection = text;
-                  _isCustomSection = false;
-                });
-                Navigator.pop(ctx);
-              }
-            },
-            child: const Text('Add & Select'),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> _onSubmit(List<PlantDepartment> departments) async {
+    final desc = _descriptionController.text.trim();
+    if (desc.isEmpty) {
+      SnackbarHelper.showError(context, 'Please enter a description of the issue/work');
+      return;
+    }
 
-  Future<void> _onSubmit() async {
     final user = ref.read(authNotifierProvider.notifier).currentUser;
-    if (user == null) return;
-
-    final section = _effectiveSection;
-    final equipment = _equipmentController.text.trim();
-    final description = _descriptionController.text.trim();
-
-    if (section.isEmpty) {
-      SnackbarHelper.showError(context, 'Please specify the section or plant area.');
+    if (user == null) {
+      SnackbarHelper.showError(context, 'Not authenticated');
       return;
     }
 
-    if (equipment.isEmpty) {
-      SnackbarHelper.showError(context, 'Please enter or select the equipment type.');
-      return;
-    }
+    final currentDept = departments.where((d) => d.id == _selectedDepartmentId).firstOrNull ??
+        (departments.isNotEmpty ? departments.first : null);
 
-    if (description.isEmpty) {
-      SnackbarHelper.showError(context, 'Please enter the work description.');
-      return;
-    }
+    final section = _isCustomSection
+        ? _customSectionController.text.trim()
+        : _selectedSection;
+
+    final workType = _isCustomWorkType
+        ? _customWorkTypeController.text.trim()
+        : _selectedWorkType;
+
+    // Combine date & time
+    final logDateTime = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    ).toUtc().millisecondsSinceEpoch;
 
     setState(() => _isSubmitting = true);
 
     try {
       final repo = ref.read(supabaseLogSheetRepoProvider);
 
+      // Upload image if selected
       String? imageUrl;
       if (_pickedImageBytes != null) {
         imageUrl = await repo.compressAndUploadImage(_pickedImageBytes!);
       }
 
-      final logDateTime = DateTime(
-        _selectedDate.year,
-        _selectedDate.month,
-        _selectedDate.day,
-        _selectedTime.hour,
-        _selectedTime.minute,
-      );
+      final eqName = (_hasSpecificEquipment && _selectedEquipment != null)
+          ? _selectedEquipment!.displayName
+          : '';
+
+      final eqId = (_hasSpecificEquipment && _selectedEquipment != null)
+          ? _selectedEquipment!.id
+          : null;
+
+      final snapshot = (_hasSpecificEquipment && _selectedEquipment != null && _selectedEquipment!.nameplateDetails.isNotEmpty)
+          ? jsonEncode(_selectedEquipment!.nameplateDetails.map((e) => e.toMap()).toList())
+          : null;
 
       await repo.insert(
+        departmentId: currentDept?.id,
+        departmentName: currentDept?.name,
         operatorId: user.id,
         operatorName: user.username,
-        section: section,
-        logDate: logDateTime.toUtc().millisecondsSinceEpoch,
-        workType: _selectedWorkType,
-        equipmentType: equipment,
-        description: description,
+        section: section.isNotEmpty ? section : 'General',
+        logDate: logDateTime,
+        workType: workType.isNotEmpty ? workType : 'General',
+        equipmentId: eqId,
+        equipmentType: eqName,
+        nameplateSnapshot: snapshot,
+        description: desc,
         imageUrl: imageUrl,
       );
 
-      if (mounted) {
-        ref.invalidate(logSheetsListProvider);
-        SnackbarHelper.showSuccess(context, 'Log Sheet entry recorded successfully!');
-        context.pop(true);
-      }
+      if (!mounted) return;
+
+      ref.invalidate(plantLogSheetsListProvider);
+      SnackbarHelper.showSuccess(context, 'Log sheet entry recorded successfully');
+      context.pop();
     } catch (e) {
       if (mounted) {
-        final errorStr = e.toString();
-        if (errorStr.contains('PGRST205') || errorStr.contains('schema cache') || errorStr.contains('not find the table')) {
-          _showDatabaseSetupDialog();
-        } else {
-          SnackbarHelper.showError(context, 'Failed to save log entry: $e');
-        }
+        SnackbarHelper.showError(context, 'Failed to save log sheet: $e');
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
-  void _showDatabaseSetupDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.info_outline_rounded, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('Database Setup Required'),
-          ],
-        ),
-        content: const Text(
-          'The log_sheets table has not been initialized in Supabase yet.\n\n'
-          'Please execute the provided SQL setup script once in your Supabase SQL Editor to enable Work Logs.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final user = ref.watch(authNotifierProvider.notifier).currentUser;
+    final isAdmin = user?.role == 'admin';
+
+    final userDeptsAsync = ref.watch(userAvailableDepartmentsProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('New Log Sheet Entry'),
+        title: const Text('New Plant Log Sheet Entry'),
       ),
-      body: FormContainer(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Date & Time Picker
-              Row(
+      body: userDeptsAsync.when(
+        loading: () => const LoadingWidget(message: 'Loading plant divisions...'),
+        error: (e, _) => Center(child: Text('Error: $e')),
+        data: (departments) {
+          if (departments.isEmpty) {
+            return const Center(child: Text('No plant divisions available.'));
+          }
+
+          // Initialize selected department if null
+          _selectedDepartmentId ??= departments.first.id;
+          final currentDept = departments.where((d) => d.id == _selectedDepartmentId).firstOrNull ??
+              departments.first;
+
+          // Available sections and work types for this division
+          final availableSections = currentDept.sections.isNotEmpty
+              ? currentDept.sections
+              : ['General Area'];
+          if (!_isCustomSection && !availableSections.contains(_selectedSection)) {
+            _selectedSection = availableSections.first;
+          }
+
+          final availableWorkTypes = currentDept.workTypes.isNotEmpty
+              ? currentDept.workTypes
+              : ['Breakdown Repair', 'Preventive Maintenance', 'Operation', 'Other'];
+          if (!_isCustomWorkType && !availableWorkTypes.contains(_selectedWorkType)) {
+            _selectedWorkType = availableWorkTypes.first;
+          }
+
+          // Equipments for selected department and section
+          final equipmentsAsync = ref.watch(
+            plantEquipmentsProvider((
+              departmentId: currentDept.id,
+              section: _isCustomSection ? null : _selectedSection,
+            )),
+          );
+
+          final dateStr = DateFormat('EEE, dd MMM yyyy').format(_selectedDate);
+          final timeStr = _selectedTime.format(context);
+
+          return FormContainer(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.calendar_today_rounded),
-                      title: const Text('Date', style: TextStyle(fontSize: 12)),
-                      subtitle: Text(DateFormat('dd MMM yyyy').format(_selectedDate),
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      onTap: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: _selectedDate,
-                          firstDate: DateTime(2020),
-                          lastDate: DateTime(2101),
-                        );
-                        if (picked != null) setState(() => _selectedDate = picked);
-                      },
+                  // 1. Division / Department
+                  Card(
+                    elevation: 0,
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.business_rounded, color: AppColors.primary, size: 20),
+                              const SizedBox(width: 8),
+                              Text('Plant Division / Department',
+                                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          if (departments.length == 1 && !isAdmin) ...[
+                            Text(
+                              '${departments.first.name} (${departments.first.code})',
+                              style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ] else ...[
+                            DropdownButtonFormField<String>(
+                              initialValue: _selectedDepartmentId,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              ),
+                              items: departments.map((d) {
+                                return DropdownMenuItem(
+                                  value: d.id,
+                                  child: Text('${d.name} (${d.code})', overflow: TextOverflow.ellipsis),
+                                );
+                              }).toList(),
+                              onChanged: (v) {
+                                if (v != null) {
+                                  setState(() {
+                                    _selectedDepartmentId = v;
+                                    _selectedEquipment = null;
+                                  });
+                                }
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
-                  Expanded(
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.access_time_rounded),
-                      title: const Text('Time', style: TextStyle(fontSize: 12)),
-                      subtitle: Text(_selectedTime.format(context),
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      onTap: () async {
-                        final picked = await showTimePicker(
-                          context: context,
-                          initialTime: _selectedTime,
-                        );
-                        if (picked != null) setState(() => _selectedTime = picked);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(height: 24),
+                  const SizedBox(height: 16),
 
-              // Section Dropdown with Add Custom Section Option
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Section / Plant Area', style: theme.textTheme.titleSmall),
-                  TextButton.icon(
-                    icon: const Icon(Icons.add_rounded, size: 16),
-                    label: const Text('+ Add Custom Section', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                    onPressed: _promptAddCustomSection,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                value: _availableSections.contains(_selectedSection) ? _selectedSection : _availableSections.first,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Select Section',
-                  prefixIcon: Icon(Icons.apartment_rounded),
-                ),
-                items: [
-                  ..._availableSections.map((s) => DropdownMenuItem(value: s, child: Text(s))),
-                  const DropdownMenuItem(
-                    value: '__custom__',
-                    child: Text('✏️ Type Custom Section...', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                  ),
-                ],
-                onChanged: (val) {
-                  if (val == '__custom__') {
-                    setState(() {
-                      _isCustomSection = true;
-                    });
-                  } else if (val != null) {
-                    setState(() {
-                      _selectedSection = val;
-                      _isCustomSection = false;
-                    });
-                    _loadAllSuggestions();
-                  }
-                },
-              ),
-              if (_isCustomSection) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _customSectionController,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Custom Section Name',
-                    hintText: 'e.g. SMS 4 Secondary Refining, Pump Station',
-                    prefixIcon: Icon(Icons.edit_note_rounded),
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ],
-              const SizedBox(height: 20),
-
-              // Work Type Selector with + Add Custom Type chip
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Type of Work', style: theme.textTheme.titleSmall),
-                  TextButton.icon(
-                    icon: const Icon(Icons.add_rounded, size: 16),
-                    label: const Text('+ Custom Type', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                    onPressed: _promptAddCustomWorkType,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ..._availableWorkTypes.map((type) {
-                    final isSelected = _selectedWorkType == type;
-                    return ChoiceChip(
-                      label: Text(type, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                      selected: isSelected,
-                      selectedColor: AppColors.primaryContainer,
-                      onSelected: (selected) {
-                        if (selected) setState(() => _selectedWorkType = type);
-                      },
-                    );
-                  }),
-                  ActionChip(
-                    avatar: const Icon(Icons.add_rounded, size: 16),
-                    label: const Text('Add Type', style: TextStyle(fontSize: 12)),
-                    onPressed: _promptAddCustomWorkType,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // Equipment Type with Autocomplete
-              Text('Equipment Name / ID', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 6),
-              Autocomplete<String>(
-                optionsBuilder: (textEditingValue) {
-                  if (textEditingValue.text.isEmpty) {
-                    return _equipmentSuggestions;
-                  }
-                  return _equipmentSuggestions.where((option) =>
-                      option.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-                },
-                onSelected: (selection) {
-                  _equipmentController.text = selection;
-                },
-                fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
-                  textEditingController.addListener(() {
-                    _equipmentController.text = textEditingController.text;
-                  });
-                  return TextField(
-                    controller: textEditingController,
-                    focusNode: focusNode,
-                    decoration: const InputDecoration(
-                      hintText: 'e.g. Induction Coil #2, Blower Motor, ESP, Pump #1',
-                      prefixIcon: Icon(Icons.precision_manufacturing_rounded),
-                      helperText: 'Select existing or type any new equipment name',
-                    ),
-                    textInputAction: TextInputAction.next,
-                  );
-                },
-              ),
-              const SizedBox(height: 20),
-
-              // Description
-              Text('Work Description / Observations', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _descriptionController,
-                minLines: 4,
-                maxLines: 7,
-                decoration: const InputDecoration(
-                  hintText: 'Describe maintenance done, parameters checked, faults observed, or parts replaced...',
-                  alignLabelWithHint: true,
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Photo Attachment Section
-              Text('Photo Attachment (Optional)', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 8),
-              if (_pickedImageBytes == null)
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.add_a_photo_rounded),
-                  label: const Text('Select / Capture Photo'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  onPressed: _pickImage,
-                )
-              else
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: theme.colorScheme.outlineVariant),
-                  ),
-                  child: Row(
+                  // 2. Date & Time Selection
+                  Row(
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(
-                          _pickedImageBytes!,
-                          width: 64,
-                          height: 64,
-                          fit: BoxFit.cover,
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.calendar_today_rounded, size: 18),
+                          label: Text(dateStr, style: const TextStyle(fontSize: 13)),
+                          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                          onPressed: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _selectedDate,
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now().add(const Duration(days: 1)),
+                            );
+                            if (picked != null) setState(() => _selectedDate = picked);
+                          },
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _pickedImageName ?? 'Attached Photo',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const Text(
-                              'Auto-compressed to ~100 KB for fast loading',
-                              style: TextStyle(fontSize: 11, color: Colors.green),
-                            ),
-                          ],
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.access_time_rounded, size: 18),
+                          label: Text(timeStr, style: const TextStyle(fontSize: 13)),
+                          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                          onPressed: () async {
+                            final picked = await showTimePicker(
+                              context: context,
+                              initialTime: _selectedTime,
+                            );
+                            if (picked != null) setState(() => _selectedTime = picked);
+                          },
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline_rounded, color: Colors.red),
-                        tooltip: 'Remove photo',
-                        onPressed: () {
-                          setState(() {
-                            _pickedImageBytes = null;
-                            _pickedImageName = null;
-                          });
-                        },
                       ),
                     ],
                   ),
-                ),
-              const SizedBox(height: 32),
+                  const SizedBox(height: 16),
 
-              // Submit Button
-              AppButton(
-                label: 'Save Log Sheet Entry',
-                isLoading: _isSubmitting,
-                onPressed: _onSubmit,
+                  // 3. Plant Section & Work Type
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Section
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Section / Area *', style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            if (!_isCustomSection) ...[
+                              DropdownButtonFormField<String>(
+                                initialValue: availableSections.contains(_selectedSection)
+                                    ? _selectedSection
+                                    : availableSections.first,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                                ),
+                                items: [
+                                  ...availableSections.map((s) => DropdownMenuItem(value: s, child: Text(s, overflow: TextOverflow.ellipsis))),
+                                  const DropdownMenuItem(value: '__custom__', child: Text('+ Custom Section...', style: TextStyle(color: AppColors.primary))),
+                                ],
+                                onChanged: (v) {
+                                  if (v == '__custom__') {
+                                    setState(() {
+                                      _isCustomSection = true;
+                                      _customSectionController.text = '';
+                                    });
+                                  } else if (v != null) {
+                                    setState(() => _selectedSection = v);
+                                  }
+                                },
+                              ),
+                            ] else ...[
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _customSectionController,
+                                      decoration: const InputDecoration(
+                                        hintText: 'Enter section',
+                                        isDense: true,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 18),
+                                    onPressed: () => setState(() => _isCustomSection = false),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+
+                      // Work Type
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Work Type *', style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            if (!_isCustomWorkType) ...[
+                              DropdownButtonFormField<String>(
+                                initialValue: availableWorkTypes.contains(_selectedWorkType)
+                                    ? _selectedWorkType
+                                    : availableWorkTypes.first,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                                ),
+                                items: [
+                                  ...availableWorkTypes.map((wt) => DropdownMenuItem(value: wt, child: Text(wt, overflow: TextOverflow.ellipsis))),
+                                  const DropdownMenuItem(value: '__custom__', child: Text('+ Custom Work Type...', style: TextStyle(color: AppColors.primary))),
+                                ],
+                                onChanged: (v) {
+                                  if (v == '__custom__') {
+                                    setState(() {
+                                      _isCustomWorkType = true;
+                                      _customWorkTypeController.text = '';
+                                    });
+                                  } else if (v != null) {
+                                    setState(() => _selectedWorkType = v);
+                                  }
+                                },
+                              ),
+                            ] else ...[
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _customWorkTypeController,
+                                      decoration: const InputDecoration(
+                                        hintText: 'Enter work type',
+                                        isDense: true,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 18),
+                                    onPressed: () => setState(() => _isCustomWorkType = false),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // 4. Equipment Selection (Optional Breakdown Toggle!)
+                  Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                _hasSpecificEquipment ? Icons.precision_manufacturing_rounded : Icons.report_problem_outlined,
+                                color: _hasSpecificEquipment ? AppColors.primary : Colors.orange,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Equipment Selection',
+                                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              Switch.adaptive(
+                                value: _hasSpecificEquipment,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _hasSpecificEquipment = val;
+                                    if (!val) _selectedEquipment = null;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                          Text(
+                            _hasSpecificEquipment
+                                ? 'Specify the equipment experiencing the issue / maintenance.'
+                                : 'General / Line Breakdown (No specific equipment required).',
+                            style: theme.textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                          ),
+
+                          if (_hasSpecificEquipment) ...[
+                            const SizedBox(height: 12),
+                            equipmentsAsync.when(
+                              loading: () => const LinearProgressIndicator(),
+                              error: (e, _) => Text('Error loading equipments: $e'),
+                              data: (equipments) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: DropdownButtonFormField<PlantEquipment>(
+                                            initialValue: _selectedEquipment,
+                                            isExpanded: true,
+                                            decoration: const InputDecoration(
+                                              labelText: 'Select Equipment *',
+                                              isDense: true,
+                                            ),
+                                            items: equipments.map((eq) {
+                                              return DropdownMenuItem(
+                                                value: eq,
+                                                child: Text(
+                                                  eq.displayName,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                              );
+                                            }).toList(),
+                                            onChanged: (eq) => setState(() => _selectedEquipment = eq),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        IconButton.filledTonal(
+                                          icon: const Icon(Icons.add_rounded),
+                                          tooltip: 'Register New Equipment',
+                                          onPressed: () => _openAddNewEquipment(departments),
+                                        ),
+                                      ],
+                                    ),
+
+                                    // Nameplate Preview Card if selected
+                                    if (_selectedEquipment != null) ...[
+                                      const SizedBox(height: 10),
+                                      Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                const Icon(Icons.badge_outlined, size: 16, color: AppColors.primary),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  'Nameplate Specifications (${_selectedEquipment!.nameplateDetails.length} recorded)',
+                                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 6),
+                                            Text(
+                                              _selectedEquipment!.nameplateSummary,
+                                              style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // 5. Work / Breakdown Description
+                  Text('Issue / Work Description *', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _descriptionController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      hintText: 'Detail the breakdown symptoms, root cause, repairs completed, or observations...',
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // 6. Photo Attachment
+                  Text('Attach Photo (Optional)', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  if (_pickedImageBytes != null) ...[
+                    Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.memory(
+                            _pickedImageBytes!,
+                            height: 160,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: CircleAvatar(
+                            backgroundColor: Colors.black54,
+                            child: IconButton(
+                              icon: const Icon(Icons.close, color: Colors.white),
+                              onPressed: () => setState(() {
+                                _pickedImageBytes = null;
+                                _pickedImageName = null;
+                              }),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.add_a_photo_outlined),
+                    label: Text(_pickedImageBytes != null ? 'Change Photo' : 'Add Photo from Device / Camera'),
+                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                    onPressed: _pickImage,
+                  ),
+                  const SizedBox(height: 32),
+
+                  // 7. Submit Button
+                  AppButton(
+                    label: 'Save Log Sheet Entry',
+                    isLoading: _isSubmitting,
+                    onPressed: () => _onSubmit(departments),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }

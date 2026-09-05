@@ -172,6 +172,18 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     color: Colors.teal,
                     onTap: () => context.push(RoutePaths.logSheets),
                   ),
+                  _ActionCard(
+                    title: 'Plant Divisions',
+                    icon: Icons.apartment_rounded,
+                    color: Colors.deepOrange,
+                    onTap: () => context.push(RoutePaths.adminDepartments),
+                  ),
+                  _ActionCard(
+                    title: 'Equipments & Specs',
+                    icon: Icons.precision_manufacturing_rounded,
+                    color: Colors.indigo,
+                    onTap: () => context.push(RoutePaths.plantEquipments),
+                  ),
                 ],
               ),
             ],
