@@ -382,7 +382,7 @@ class _EquipmentCard extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(8),
-                          border: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
+                          border: Border.all(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4)),
                         ),
                         child: RichText(
                           text: TextSpan(

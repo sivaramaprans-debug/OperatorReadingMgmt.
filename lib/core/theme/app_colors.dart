@@ -39,6 +39,10 @@ abstract final class AppColors {
   static const Color background = Color(0xFFF6FAFE);
   static const Color onBackground = Color(0xFF191C20);
 
+  // Text colors
+  static const Color textPrimary = onSurface;
+  static const Color textSecondary = onSurfaceVariant;
+
   // ── Dark mode surfaces ────────────────────────────────────────────────────
   static const Color darkSurface = Color(0xFF0F1318);    // Near-black, blue undertone
   static const Color darkSurfaceVariant = Color(0xFF1E2328);
