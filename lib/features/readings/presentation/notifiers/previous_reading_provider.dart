@@ -7,6 +7,7 @@ typedef PreviousReadingArgs = ({
   String readingType,
   int readingDateMs,
   String heatNumber,
+  String? excludeReadingId,
 });
 
 final previousReadingProvider = FutureProvider.autoDispose.family<SupabaseReading?, PreviousReadingArgs>((ref, args) async {
@@ -18,5 +19,6 @@ final previousReadingProvider = FutureProvider.autoDispose.family<SupabaseReadin
     readingType: args.readingType,
     readingDateMs: args.readingDateMs,
     heatNumber: args.heatNumber,
+    excludeReadingId: args.excludeReadingId,
   );
 });

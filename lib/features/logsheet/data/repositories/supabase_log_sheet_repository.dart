@@ -146,6 +146,48 @@ class SupabaseLogSheetRepository {
       return [];
     }
   }
+
+  /// Get distinct sections previously recorded.
+  Future<List<String>> getSectionSuggestions() async {
+    try {
+      final data = await supabase
+          .from(_table)
+          .select('section')
+          .limit(200);
+
+      final set = <String>{};
+      for (final row in data) {
+        final s = (row['section'] as String?)?.trim();
+        if (s != null && s.isNotEmpty) {
+          set.add(s);
+        }
+      }
+      return set.toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Get distinct work types previously recorded.
+  Future<List<String>> getWorkTypeSuggestions() async {
+    try {
+      final data = await supabase
+          .from(_table)
+          .select('work_type')
+          .limit(200);
+
+      final set = <String>{};
+      for (final row in data) {
+        final wt = (row['work_type'] as String?)?.trim();
+        if (wt != null && wt.isNotEmpty) {
+          set.add(wt);
+        }
+      }
+      return set.toList();
+    } catch (_) {
+      return [];
+    }
+  }
 }
 
 final supabaseLogSheetRepoProvider =

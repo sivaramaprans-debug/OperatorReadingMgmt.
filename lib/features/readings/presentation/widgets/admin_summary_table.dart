@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:open_filex/open_filex.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/app_date_utils.dart';
+import '../../../../core/utils/reading_calculation_utils.dart';
 import '../../../../database/repositories/supabase_devices_repository.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 import '../../../../database/supabase_providers.dart';
@@ -120,7 +121,7 @@ class AdminSummaryTable extends ConsumerWidget {
                 final prevVals = _parseValues(deviceRows[i - 1].reading.readingValues);
                 for (final u in ['KWH', 'KWHLT']) {
                   if (curVals.containsKey(u) && prevVals.containsKey(u)) {
-                    diffs[u] = curVals[u]! - prevVals[u]!;
+                    diffs[u] = ReadingCalculationUtils.calculateDifference(curVals[u]!, prevVals[u]!);
                   } else {
                     diffs[u] = null;
                   }
@@ -331,40 +332,43 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
           _cellSelectMode = true;
           _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
         });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cell selected. Tap more cells to add to selection or tap Copy.'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       },
       onTap: () {
-        if (_cellSelectMode) {
-          setState(() {
-            if (_selectedCells.containsKey(cellKey)) {
-              _selectedCells.remove(cellKey);
-            } else {
-              _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
-            }
-          });
-        } else {
-          _copySingle(text);
-        }
+        setState(() {
+          _cellSelectMode = true;
+          if (_selectedCells.containsKey(cellKey)) {
+            _selectedCells.remove(cellKey);
+          } else {
+            _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
+          }
+        });
       },
       child: Tooltip(
-        message: _cellSelectMode
-            ? (isSelected ? 'Tap to deselect' : 'Tap to select')
-            : (text == '—' || text.isEmpty ? '' : 'Tap to copy value, Long-press for multi-select'),
-        waitDuration: const Duration(milliseconds: 600),
+        message: isSelected ? 'Selected (Tap to deselect)' : 'Tap to select for Excel copy',
+        waitDuration: const Duration(milliseconds: 400),
         child: Container(
           width: width,
           height: 38,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: effectiveBg,
+            color: isSelected ? Colors.blue.withOpacity(0.28) : bg,
             border: isSelected
-                ? Border.all(color: AppColors.primary, width: 1.5)
+                ? Border.all(color: Colors.blueAccent, width: 2.0)
                 : null,
           ),
           child: Text(
             text,
             style: TextStyle(
               fontSize: 11,
-              color: isSelected ? AppColors.primary : textColor,
+              color: isSelected ? Colors.blue.shade900 : textColor,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
             ),
             textAlign: TextAlign.center,
@@ -495,7 +499,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Selection & Export Action Bar
+        // Selection & Export Action Bar (Always visible)
         Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -509,109 +513,117 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
             crossAxisAlignment: WrapCrossAlignment.center,
             alignment: WrapAlignment.spaceBetween,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton.icon(
-                    icon: Icon(_cellSelectMode ? Icons.close_rounded : Icons.crop_free_rounded, size: 16),
-                    label: Text(
-                      _cellSelectMode ? 'Done' : '📋 Drag & Cell Copy (Excel)',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _cellSelectMode = !_cellSelectMode;
-                        if (!_cellSelectMode) _selectedCells.clear();
-                      });
-                    },
-                  ),
-                  if (_cellSelectMode) ...[
+              OutlinedButton.icon(
+                icon: Icon(_cellSelectMode ? Icons.close_rounded : Icons.crop_free_rounded, size: 16),
+                label: Text(
+                  _cellSelectMode ? 'Done Selecting' : '📋 Select Cells (Excel)',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  backgroundColor: _cellSelectMode ? AppColors.primaryContainer : null,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _cellSelectMode = !_cellSelectMode;
+                    if (!_cellSelectMode) _selectedCells.clear();
+                  });
+                },
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.table_view_rounded, size: 16),
+                label: const Text(
+                  'Export Filtered Excel',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+                onPressed: () async {
+                  final exporter = ExportReadingsUseCase();
+                  final filePath = await exporter.exportAdminSheetToExcel(
+                    sheetTitle: isHeat ? 'Heat_Summary' : 'Day_Summary',
+                    devices: widget.qualifiedDevices,
+                    readings: widget.rows,
+                    diffMap: widget.diffMap,
+                    deviceFactors: widget.deviceFactors,
+                  );
+
+                  if (filePath != null && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Excel saved to: $filePath'),
+                        duration: const Duration(seconds: 10),
+                        action: SnackBarAction(
+                          label: 'OPEN FILE',
+                          onPressed: () => OpenFilex.open(filePath),
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+
+        // Prominent Floating / Active Copy Action Bar when cells are selected
+        if (_selectedCells.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 20),
                     const SizedBox(width: 8),
                     Text(
                       '${_selectedCells.length} cells selected',
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ],
-                ],
-              ),
-
-              if (_cellSelectMode && _selectedCells.isNotEmpty)
+                ),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextButton(
                       onPressed: () => setState(() => _selectedCells.clear()),
-                      child: const Text('Clear', style: TextStyle(fontSize: 11)),
+                      style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                      child: const Text('Clear'),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 6),
                     ElevatedButton.icon(
-                      icon: const Icon(Icons.table_rows_rounded, size: 14),
-                      label: Text('Copy Column (${_selectedCells.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.copy_rounded, size: 16),
+                      label: Text('Copy (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        visualDensity: VisualDensity.compact,
+                        backgroundColor: Colors.white,
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
                       onPressed: _copySelectedAsColumn,
                     ),
-                    const SizedBox(width: 4),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.grid_on_rounded, size: 14),
-                      label: const Text('Copy Grid', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      onPressed: _copySelectedAsGrid,
-                    ),
                   ],
-                )
-              else
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  icon: const Icon(Icons.table_view_rounded, size: 16),
-                  label: const Text(
-                    'Export Filtered Excel',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                  ),
-                  onPressed: () async {
-                    final exporter = ExportReadingsUseCase();
-                    final filePath = await exporter.exportAdminSheetToExcel(
-                      sheetTitle: isHeat ? 'Heat_Summary' : 'Day_Summary',
-                      devices: widget.qualifiedDevices,
-                      readings: widget.rows,
-                      diffMap: widget.diffMap,
-                      deviceFactors: widget.deviceFactors,
-                    );
-
-                    if (filePath != null && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Excel saved to: $filePath'),
-                          duration: const Duration(seconds: 10),
-                          action: SnackBarAction(
-                            label: 'OPEN FILE',
-                            onPressed: () => OpenFilex.open(filePath),
-                          ),
-                        ),
-                      );
-                    }
-                  },
                 ),
-            ],
+              ],
+            ),
           ),
-        ),
 
         // Scrollable Table with Gesture Drag Support
         Builder(
@@ -660,6 +672,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                         final devName = widget.deviceNames[d.id] ?? d.id;
 
                         void selectFullColumn(String colType, int colOffset) {
+                          final List<String> collectedValues = [];
                           setState(() {
                             _cellSelectMode = true;
                             if (isHeat) {
@@ -669,10 +682,16 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                                 if (rwd != null) {
                                   String val = '';
                                   if (colType == 'heat') val = rwd.reading.heatNumber;
+                                  if (colType == 'time') {
+                                    val = DateFormat('hh:mm a').format(
+                                      DateTime.fromMillisecondsSinceEpoch(rwd.reading.readingDate, isUtc: true).toLocal(),
+                                    );
+                                  }
                                   if (colType == 'kwh') val = _consStr(rwd.reading.id, 'KWH', d.id);
                                   if (colType == 'kwhlt') val = _consStr(rwd.reading.id, 'KWHLT', d.id);
                                   final key = 'h_${rIdx}_${devIdx}_$colOffset';
                                   _selectedCells[key] = (row: rIdx, col: devIdx * 5 + colOffset, value: val, label: '$devName $colType');
+                                  if (val.isNotEmpty && val != '—') collectedValues.add(val);
                                 }
                               }
                             } else {
@@ -685,10 +704,29 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                                   if (colType == 'kwhlt') val = _consStr(rwd.reading.id, 'KWHLT', d.id);
                                   final key = 'd_${rIdx}_${devIdx}_$colOffset';
                                   _selectedCells[key] = (row: rIdx, col: devIdx * 2 + colOffset, value: val, label: '$devName $colType');
+                                  if (val.isNotEmpty && val != '—') collectedValues.add(val);
                                 }
                               }
                             }
                           });
+
+                          if (collectedValues.isNotEmpty) {
+                            Clipboard.setData(ClipboardData(text: collectedValues.join('\n')));
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Row(
+                                  children: [
+                                    const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
+                                    const SizedBox(width: 8),
+                                    Expanded(child: Text('${collectedValues.length} values for "$devName $colType" copied as 1 Vertical Column (Ready for Excel)')),
+                                  ],
+                                ),
+                                duration: const Duration(seconds: 3),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          }
                         }
 
                         if (isHeat) {
@@ -696,7 +734,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                             _divV(),
                             _hCell('Heat #', width: _subHeatW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('heat', 1), tooltip: 'Click to select all Heat # values for $devName'),
                             _divV(),
-                            _hCell('Time', width: _subTimeW, bg: deviceHeaderBg.withOpacity(0.5)),
+                            _hCell('Time', width: _subTimeW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('time', 2), tooltip: 'Click to select all Time values for $devName'),
                             _divV(),
                             _hCell('KWH', width: _subValW, bg: deviceHeaderBg.withOpacity(0.5), onTap: () => selectFullColumn('kwh', 3), tooltip: 'Click to select all KWH values for $devName'),
                             _divV(),

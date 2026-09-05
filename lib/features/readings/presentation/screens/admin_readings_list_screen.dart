@@ -169,8 +169,7 @@ class _DetailTab extends ConsumerWidget {
       children: [
         const _FilterBar(),
         Expanded(
-          child: SelectionArea(
-            child: readingsAsync.when(
+          child: readingsAsync.when(
             loading: () => const LoadingWidget(message: 'Searching readings...'),
             error: (err, stack) => ErrorStateWidget(
               message: 'Failed to search readings',
@@ -233,7 +232,6 @@ class _DetailTab extends ConsumerWidget {
             },
           ),
         ),
-      ),
       ],
     );
   }
@@ -251,13 +249,11 @@ class _SummaryTab extends ConsumerWidget {
       children: [
         _FilterBar(readingType: readingType),
         Expanded(
-          child: SelectionArea(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                AdminSummaryTable(readingType: readingType),
-              ],
-            ),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              AdminSummaryTable(readingType: readingType),
+            ],
           ),
         ),
       ],
@@ -669,6 +665,7 @@ class _AdminDeviceReadingsSectionState
               showOperatorColumn: true,
               operatorNames: opNamesFiltered,
               showAdminActions: true,
+              enableExcelCopyTools: true,
               filterOperatorId: filter.operatorId,
             ),
         ],

@@ -10,6 +10,7 @@ import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/form_container.dart';
 import '../../../../shared/widgets/snackbar_helper.dart';
 import '../notifiers/device_form_notifier.dart';
+import '../widgets/meter_replacement_dialog.dart';
 
 class AdminDeviceEditScreen extends ConsumerStatefulWidget {
   const AdminDeviceEditScreen({super.key, required this.deviceId, this.device});
@@ -357,6 +358,27 @@ class _AdminDeviceEditScreenState extends ConsumerState<AdminDeviceEditScreen> {
                   ),
                 ],
                 const SizedBox(height: 24),
+              ],
+
+              if (widget.device != null) ...[
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.swap_horiz_rounded, color: AppColors.primary),
+                  label: const Text(
+                    '🔄 Replace Meter / Change MF (New Baseline & History)',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: const BorderSide(color: AppColors.primary, width: 1.5),
+                  ),
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => MeterReplacementDialog(device: widget.device!),
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
               ],
 
               AppButton(

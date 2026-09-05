@@ -24,7 +24,7 @@ class _LogSheetListScreenState extends ConsumerState<LogSheetListScreen> {
   String _searchQuery = '';
   final _searchController = TextEditingController();
 
-  static const List<String> _sections = [
+  final List<String> _sections = [
     'All',
     'Furnace / Induction',
     'CCM',
@@ -36,17 +36,41 @@ class _LogSheetListScreenState extends ConsumerState<LogSheetListScreen> {
     'General Plant',
   ];
 
-  static const List<String> _workTypes = [
+  final List<String> _workTypes = [
     'All',
-    'Maintenance',
-    'Electrical',
-    'Mechanical',
     'Operation',
     'Inspection',
     'Breakdown Repair',
     'Cleaning / Routine',
+    'Maintenance',
+    'Electrical',
+    'Mechanical',
     'Other',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFilters();
+  }
+
+  Future<void> _loadFilters() async {
+    try {
+      final repo = ref.read(supabaseLogSheetRepoProvider);
+      final secList = await repo.getSectionSuggestions();
+      final wtList = await repo.getWorkTypeSuggestions();
+      if (mounted) {
+        setState(() {
+          for (final s in secList) {
+            if (!_sections.contains(s)) _sections.add(s);
+          }
+          for (final wt in wtList) {
+            if (!_workTypes.contains(wt)) _workTypes.add(wt);
+          }
+        });
+      }
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -160,7 +184,19 @@ class _LogSheetListScreenState extends ConsumerState<LogSheetListScreen> {
           Expanded(
             child: logsAsync.when(
               loading: () => const LoadingWidget(message: 'Loading log sheets...'),
-              error: (e, _) => Center(child: Text('Error: $e')),
+              error: (e, _) {
+                final err = e.toString();
+                final isTableMissing = err.contains('PGRST205') || err.contains('schema cache') || err.contains('not find the table');
+                return EmptyStateWidget(
+                  icon: Icons.table_chart_outlined,
+                  title: isTableMissing ? 'Log Sheet Setup Required' : 'Unable to Load Logs',
+                  subtitle: isTableMissing
+                      ? 'The log_sheets table needs to be created in Supabase SQL editor once.\nCheck the SQL setup instructions.'
+                      : 'Error: $e',
+                  actionLabel: 'Try Again',
+                  action: () => ref.invalidate(logSheetsListProvider),
+                );
+              },
               data: (logs) {
                 var filtered = logs;
                 if (_searchQuery.isNotEmpty) {

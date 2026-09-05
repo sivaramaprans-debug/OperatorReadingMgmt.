@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/reading_calculation_utils.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 import '../../../../database/supabase_providers.dart';
 import '../../../../routing/route_paths.dart';
@@ -24,6 +25,7 @@ class ReadingsCalculatedTable extends ConsumerStatefulWidget {
     this.showOperatorColumn = false,
     this.operatorNames = const {},
     this.showAdminActions = false,
+    this.enableExcelCopyTools = false,
     this.filterOperatorId,
   });
 
@@ -35,6 +37,7 @@ class ReadingsCalculatedTable extends ConsumerStatefulWidget {
   final bool showOperatorColumn;
   final Map<String, String> operatorNames;
   final bool showAdminActions;
+  final bool enableExcelCopyTools;
   final String? filterOperatorId;
 
   @override
@@ -43,7 +46,9 @@ class ReadingsCalculatedTable extends ConsumerStatefulWidget {
 
 class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTable> {
   bool _selectionMode = false;
+  bool _cellSelectMode = false;
   final Set<String> _selectedReadingIds = {};
+  final Map<String, ({int row, int col, String value, String label})> _selectedCells = {};
 
   static bool _isCumulativeUnit(String unit) {
     final u = unit.trim().toUpperCase();
@@ -97,7 +102,7 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
           final prevVals = _parseValues(sorted[i - 1].readingValues);
           for (final u in widget.matrixUnits) {
             if (curVals.containsKey(u) && prevVals.containsKey(u)) {
-              diffMap[u] = curVals[u]! - prevVals[u]!;
+              diffMap[u] = ReadingCalculationUtils.calculateDifference(curVals[u]!, prevVals[u]!);
             } else {
               diffMap[u] = null;
             }
@@ -137,8 +142,9 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
   }
 
   void _copySingleColumn(String colName, List<String> values) {
-    if (values.isEmpty) return;
-    final text = values.join('\n');
+    final validVals = values.where((v) => v.isNotEmpty && v != '—').toList();
+    if (validVals.isEmpty) return;
+    final text = validVals.join('\n');
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -147,11 +153,150 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
           children: [
             const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text('${values.length} values for "$colName" copied as 1 Vertical Column (Ready for Excel)')),
+            Expanded(child: Text('${validVals.length} values for "$colName" copied as 1 Vertical Column (Ready for Excel)')),
           ],
         ),
         duration: const Duration(seconds: 3),
         behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _copySelectedCellsAsColumn() {
+    if (_selectedCells.isEmpty) return;
+    final sorted = _selectedCells.values.toList()
+      ..sort((a, b) {
+        final rowCmp = a.row.compareTo(b.row);
+        if (rowCmp != 0) return rowCmp;
+        return a.col.compareTo(b.col);
+      });
+
+    final text = sorted.map((c) => c.value == '—' ? '' : c.value).join('\n');
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${sorted.length} values copied as 1 Vertical Column (Paste in Excel)')),
+          ],
+        ),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _copySelectedCellsAsGrid() {
+    if (_selectedCells.isEmpty) return;
+    final sorted = _selectedCells.values.toList()
+      ..sort((a, b) {
+        final rowCmp = a.row.compareTo(b.row);
+        if (rowCmp != 0) return rowCmp;
+        return a.col.compareTo(b.col);
+      });
+
+    final Map<int, List<({int row, int col, String value, String label})>> rowMap = {};
+    for (final item in sorted) {
+      rowMap.putIfAbsent(item.row, () => []).add(item);
+    }
+
+    final StringBuffer buffer = StringBuffer();
+    for (final r in rowMap.keys.toList()..sort()) {
+      final cols = rowMap[r]!..sort((a, b) => a.col.compareTo(b.col));
+      buffer.writeln(cols.map((c) => c.value == '—' ? '' : c.value).join('\t'));
+    }
+
+    Clipboard.setData(ClipboardData(text: buffer.toString()));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.grid_on_rounded, color: Colors.greenAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('${sorted.length} cells copied as Grid (Tab-separated for Excel)')),
+          ],
+        ),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Widget _buildInteractiveCell({
+    required String cellKey,
+    required int row,
+    required int col,
+    required String text,
+    required String label,
+    double width = _colW,
+    Color? textColor,
+    Color? bgColor,
+    bool isBold = false,
+  }) {
+    final isSelected = _selectedCells.containsKey(cellKey);
+    final effectiveBg = isSelected
+        ? AppColors.primaryContainer.withOpacity(0.65)
+        : bgColor;
+
+    return GestureDetector(
+      onLongPress: widget.enableExcelCopyTools
+          ? () {
+              setState(() {
+                _cellSelectMode = true;
+                _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
+              });
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cell selected for Excel. Tap more cells to add to selection or tap Copy.'),
+                  duration: Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          : null,
+      onTap: () {
+        if (widget.enableExcelCopyTools) {
+          setState(() {
+            _cellSelectMode = true;
+            if (_selectedCells.containsKey(cellKey)) {
+              _selectedCells.remove(cellKey);
+            } else {
+              _selectedCells[cellKey] = (row: row, col: col, value: text, label: label);
+            }
+          });
+        }
+      },
+      child: Tooltip(
+        message: widget.enableExcelCopyTools
+            ? (isSelected ? 'Selected (Tap to deselect)' : 'Tap to select for Excel copy')
+            : (text == '—' || text.isEmpty ? '' : text),
+        waitDuration: const Duration(milliseconds: 400),
+        child: Container(
+          width: width,
+          height: 40,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.blue.withOpacity(0.28) : bgColor,
+            border: isSelected ? Border.all(color: Colors.blueAccent, width: 2.0) : null,
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              color: isSelected ? Colors.blue.shade900 : textColor,
+              fontWeight: isSelected || isBold ? FontWeight.bold : FontWeight.normal,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ),
     );
   }
@@ -191,39 +336,6 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
       ),
     );
   }
-
-  static Widget _dataCell(
-    BuildContext context,
-    String text, {
-    double width = _colW,
-    Color? textColor,
-    Color? bgColor,
-    bool isBold = false,
-  }) =>
-      Tooltip(
-        message: text == '—' || text.isEmpty ? '' : 'Tap to copy value',
-        waitDuration: const Duration(milliseconds: 600),
-        child: InkWell(
-          onTap: () => _copyValue(context, text),
-          child: Container(
-            width: width,
-            height: 40,
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            color: bgColor,
-            child: SelectableText(
-              text,
-              style: TextStyle(
-                fontSize: 11,
-                color: textColor,
-                fontWeight: isBold ? FontWeight.w800 : FontWeight.w500,
-              ),
-              textAlign: TextAlign.center,
-              onTap: () => _copyValue(context, text),
-            ),
-          ),
-        ),
-      );
 
   static Widget _dividerV() => Container(width: 1, color: Colors.grey.withOpacity(0.2));
   static Widget _dividerH() => Divider(height: 1, color: Colors.grey.withOpacity(0.2));
@@ -343,67 +455,170 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              OutlinedButton.icon(
-                icon: Icon(_selectionMode ? Icons.check_box_outlined : Icons.checklist_rounded, size: 16),
-                label: Text(
-                  _selectionMode ? 'Done Selecting' : '📋 Multi-Row Copy (Excel)',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  visualDensity: VisualDensity.compact,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _selectionMode = !_selectionMode;
-                    if (!_selectionMode) _selectedReadingIds.clear();
-                  });
-                },
-              ),
-              if (_selectionMode) ...[
-                const SizedBox(width: 8),
-                Text(
-                  '${_selectedReadingIds.length} of ${displayReadings.length} selected',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      if (_selectedReadingIds.length == displayReadings.length) {
-                        _selectedReadingIds.clear();
-                      } else {
-                        _selectedReadingIds.addAll(displayReadings.map((r) => r.id));
-                      }
-                    });
-                  },
-                  child: Text(
-                    _selectedReadingIds.length == displayReadings.length ? 'Deselect All' : 'Select All',
-                    style: const TextStyle(fontSize: 11),
+        if (widget.enableExcelCopyTools)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  icon: Icon(_cellSelectMode ? Icons.close_rounded : Icons.crop_free_rounded, size: 16),
+                  label: Text(
+                    _cellSelectMode ? 'Done' : '📋 Select Cells (Excel)',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                   ),
-                ),
-                const SizedBox(width: 4),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.copy_rounded, size: 14),
-                  label: Text('Copy for Excel (${_selectedReadingIds.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
+                  style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: _selectedReadingIds.isEmpty
-                      ? null
-                      : () => _copySelectedRowsForExcel(displayReadings, diffMap),
+                  onPressed: () {
+                    setState(() {
+                      _cellSelectMode = !_cellSelectMode;
+                      if (_cellSelectMode) _selectionMode = false;
+                      if (!_cellSelectMode) _selectedCells.clear();
+                    });
+                  },
+                ),
+                OutlinedButton.icon(
+                  icon: Icon(_selectionMode ? Icons.check_box_outlined : Icons.checklist_rounded, size: 16),
+                  label: Text(
+                    _selectionMode ? 'Done' : '📋 Select Rows (Full)',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _selectionMode = !_selectionMode;
+                      if (_selectionMode) _cellSelectMode = false;
+                      if (!_selectionMode) _selectedReadingIds.clear();
+                    });
+                  },
+                ),
+                if (_cellSelectMode && _selectedCells.isNotEmpty) ...[
+                  Text(
+                    '${_selectedCells.length} cells selected',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _selectedCells.clear()),
+                    child: const Text('Clear', style: TextStyle(fontSize: 11)),
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.table_rows_rounded, size: 14),
+                    label: Text('Copy Column (${_selectedCells.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: _copySelectedCellsAsColumn,
+                  ),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.grid_on_rounded, size: 14),
+                    label: const Text('Copy Grid', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: _copySelectedCellsAsGrid,
+                  ),
+                ],
+                if (_selectionMode) ...[
+                  Text(
+                    '${_selectedReadingIds.length} of ${displayReadings.length} rows',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        if (_selectedReadingIds.length == displayReadings.length) {
+                          _selectedReadingIds.clear();
+                        } else {
+                          _selectedReadingIds.addAll(displayReadings.map((r) => r.id));
+                        }
+                      });
+                    },
+                    child: Text(
+                      _selectedReadingIds.length == displayReadings.length ? 'Deselect All' : 'Select All',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.copy_rounded, size: 14),
+                    label: Text('Copy for Excel (${_selectedReadingIds.length})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: _selectedReadingIds.isEmpty
+                        ? null
+                        : () => _copySelectedRowsForExcel(displayReadings, diffMap),
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+        if (widget.enableExcelCopyTools && _selectedCells.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
                 ),
               ],
-            ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${_selectedCells.length} cells selected',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: () => setState(() => _selectedCells.clear()),
+                      style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                      child: const Text('Clear'),
+                    ),
+                    const SizedBox(width: 6),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.copy_rounded, size: 16),
+                      label: Text('Copy (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      onPressed: _copySelectedCellsAsColumn,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
 
         Builder(
           builder: (context) {
@@ -596,6 +811,7 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                     _dividerH(),
 
                     ...displayReadings.asMap().entries.map((entry) {
+                      final rIdx = entry.key;
                       final r = entry.value;
                       final isSelected = _selectedReadingIds.contains(r.id);
                       final readingDt = DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal();
@@ -644,12 +860,44 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                                 ),
                               ),
                             if (widget.showOperatorColumn)
-                              _dataCell(context, widget.operatorNames[r.id] ?? '—', width: _opW, bgColor: rowBg),
-                            _dataCell(context, dateStr, width: _fixedW, bgColor: rowBg),
+                              _buildInteractiveCell(
+                                cellKey: 'op_$rIdx',
+                                row: rIdx,
+                                col: 0,
+                                text: widget.operatorNames[r.id] ?? '—',
+                                label: 'Operator',
+                                width: _opW,
+                                bgColor: rowBg,
+                              ),
+                            _buildInteractiveCell(
+                              cellKey: 'date_$rIdx',
+                              row: rIdx,
+                              col: 1,
+                              text: dateStr,
+                              label: 'Date',
+                              width: _fixedW,
+                              bgColor: rowBg,
+                            ),
                             _dividerV(),
-                            _dataCell(context, readingTimeStr, width: _fixedW, bgColor: rowBg),
+                            _buildInteractiveCell(
+                              cellKey: 'rtime_$rIdx',
+                              row: rIdx,
+                              col: 2,
+                              text: readingTimeStr,
+                              label: 'Reading Time',
+                              width: _fixedW,
+                              bgColor: rowBg,
+                            ),
                             _dividerV(),
-                            _dataCell(context, postedTimeStr, width: _fixedW, bgColor: rowBg),
+                            _buildInteractiveCell(
+                              cellKey: 'ptime_$rIdx',
+                              row: rIdx,
+                              col: 3,
+                              text: postedTimeStr,
+                              label: 'Posted Time',
+                              width: _fixedW,
+                              bgColor: rowBg,
+                            ),
                             if (widget.showTypeColumn) ...[
                               _dividerV(),
                               Container(
@@ -674,9 +922,19 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                                 ),
                               ),
                               _dividerV(),
-                              _dataCell(context, r.heatNumber.isEmpty ? '—' : r.heatNumber, width: _fixedW, bgColor: rowBg),
+                              _buildInteractiveCell(
+                                cellKey: 'heat_$rIdx',
+                                row: rIdx,
+                                col: 4,
+                                text: r.heatNumber.isEmpty ? '—' : r.heatNumber,
+                                label: 'Heat #',
+                                width: _fixedW,
+                                bgColor: rowBg,
+                              ),
                             ],
-                            ...widget.matrixUnits.expand((u) {
+                            ...widget.matrixUnits.asMap().entries.expand((uEntry) {
+                              final uIdx = uEntry.key;
+                              final u = uEntry.value;
                               final isCum = _isCumulativeUnit(u);
                               final uUpper = u.toUpperCase();
                               final rawVal = values[u];
@@ -717,21 +975,50 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                               }
 
                               final isMf = _isMfUnit(u);
+                              final colBase = 5 + uIdx * 3;
+
                               if (isMf) {
                                 final mdVal = rawVal != null ? rawVal * mf : null;
                                 final mdValStr = mdVal != null ? NumberFormat('#,##0.##').format(mdVal) : '—';
                                 return [
                                   _dividerV(),
-                                  _dataCell(context, displayReading, textColor: cellTextColor, bgColor: cellBgColor, isBold: cellBold),
+                                  _buildInteractiveCell(
+                                    cellKey: 'u_rdg_${rIdx}_$uIdx',
+                                    row: rIdx,
+                                    col: colBase,
+                                    text: displayReading,
+                                    label: '$u Reading',
+                                    textColor: cellTextColor,
+                                    bgColor: cellBgColor,
+                                    isBold: cellBold,
+                                  ),
                                   _dividerV(),
-                                  _dataCell(context, mdValStr, textColor: cellTextColor, bgColor: cellBgColor, isBold: cellBold),
+                                  _buildInteractiveCell(
+                                    cellKey: 'u_calc_${rIdx}_$uIdx',
+                                    row: rIdx,
+                                    col: colBase + 1,
+                                    text: mdValStr,
+                                    label: '$u Calc',
+                                    textColor: cellTextColor,
+                                    bgColor: cellBgColor,
+                                    isBold: cellBold,
+                                  ),
                                 ];
                               }
 
                               if (!isCum) {
                                 return [
                                   _dividerV(),
-                                  _dataCell(context, displayReading, textColor: cellTextColor, bgColor: cellBgColor, isBold: cellBold),
+                                  _buildInteractiveCell(
+                                    cellKey: 'u_rdg_${rIdx}_$uIdx',
+                                    row: rIdx,
+                                    col: colBase,
+                                    text: displayReading,
+                                    label: '$u Reading',
+                                    textColor: cellTextColor,
+                                    bgColor: cellBgColor,
+                                    isBold: cellBold,
+                                  ),
                                 ];
                               }
 
@@ -743,11 +1030,38 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
 
                               return [
                                 _dividerV(),
-                                _dataCell(context, displayReading, textColor: cellTextColor, bgColor: cellBgColor, isBold: cellBold),
+                                _buildInteractiveCell(
+                                  cellKey: 'u_rdg_${rIdx}_$uIdx',
+                                  row: rIdx,
+                                  col: colBase,
+                                  text: displayReading,
+                                  label: '$u Reading',
+                                  textColor: cellTextColor,
+                                  bgColor: cellBgColor,
+                                  isBold: cellBold,
+                                ),
                                 _dividerV(),
-                                _dataCell(context, diffStr, textColor: diffColor, bgColor: cellBgColor, isBold: cellBold),
+                                _buildInteractiveCell(
+                                  cellKey: 'u_diff_${rIdx}_$uIdx',
+                                  row: rIdx,
+                                  col: colBase + 1,
+                                  text: diffStr,
+                                  label: '$u Diff',
+                                  textColor: diffColor,
+                                  bgColor: cellBgColor,
+                                  isBold: cellBold,
+                                ),
                                 _dividerV(),
-                                _dataCell(context, consStr, textColor: cellTextColor, bgColor: cellBgColor, isBold: cellBold),
+                                _buildInteractiveCell(
+                                  cellKey: 'u_cons_${rIdx}_$uIdx',
+                                  row: rIdx,
+                                  col: colBase + 2,
+                                  text: consStr,
+                                  label: '$u Consumption',
+                                  textColor: cellTextColor,
+                                  bgColor: cellBgColor,
+                                  isBold: cellBold,
+                                ),
                               ];
                             }),
                             if (widget.showAdminActions) ...[
@@ -769,29 +1083,7 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.delete_rounded, size: 16, color: Colors.red),
-                                      onPressed: () async {
-                                        final confirm = await showDialog<bool>(
-                                          context: context,
-                                          builder: (ctx) => AlertDialog(
-                                            title: const Text('Delete Reading'),
-                                            content: const Text('Are you sure you want to delete this reading?'),
-                                            actions: [
-                                              TextButton(
-                                                onPressed: () => Navigator.pop(ctx, false),
-                                                child: const Text('Cancel'),
-                                              ),
-                                              TextButton(
-                                                onPressed: () => Navigator.pop(ctx, true),
-                                                child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                        if (confirm == true) {
-                                          await ref.read(supabaseReadingsRepoProvider).delete(r.id);
-                                          ref.invalidate(adminReadingsProvider);
-                                        }
-                                      },
+                                      onPressed: () => _deleteReading(context, ref, r.id),
                                       tooltip: 'Delete',
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(),
@@ -813,6 +1105,32 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
         ),
       ],
     );
+  }
+
+  Future<void> _deleteReading(BuildContext context, WidgetRef ref, String readingId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Reading'),
+        content: const Text('Are you sure you want to delete this reading?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await ref.read(supabaseReadingsRepoProvider).delete(readingId);
+      ref.invalidate(adminReadingsProvider);
+      ref.invalidate(adminDaySummaryReadingsProvider);
+      ref.invalidate(adminHeatSummaryReadingsProvider);
+    }
   }
 }
 

@@ -22,17 +22,24 @@ class LogSheetAddScreen extends ConsumerStatefulWidget {
 class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
+  
   String _selectedSection = 'Furnace / Induction';
-  String _selectedWorkType = 'Maintenance';
-  final _equipmentController = TextEditingController();
-  final _descriptionController = TextEditingController();
+  bool _isCustomSection = false;
+  final _customSectionController = TextEditingController();
 
-  Uint8List? _pickedImageBytes;
-  String? _pickedImageName;
-  bool _isSubmitting = false;
-  List<String> _equipmentSuggestions = [];
+  String _selectedWorkType = 'Operation';
+  final List<String> _availableWorkTypes = [
+    'Operation',
+    'Inspection',
+    'Breakdown Repair',
+    'Cleaning / Routine',
+    'Maintenance',
+    'Electrical',
+    'Mechanical',
+    'Other',
+  ];
 
-  static const List<String> _sections = [
+  final List<String> _availableSections = [
     'Furnace / Induction',
     'CCM',
     'Rolling Mill',
@@ -43,36 +50,57 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
     'General Plant',
   ];
 
-  static const List<String> _workTypes = [
-    'Maintenance',
-    'Electrical',
-    'Mechanical',
-    'Operation',
-    'Inspection',
-    'Breakdown Repair',
-    'Cleaning / Routine',
-    'Other',
-  ];
+  final _equipmentController = TextEditingController();
+  final _descriptionController = TextEditingController();
+
+  Uint8List? _pickedImageBytes;
+  String? _pickedImageName;
+  bool _isSubmitting = false;
+  List<String> _equipmentSuggestions = [];
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _selectedTime = TimeOfDay.now();
-    _loadSuggestions();
+    _loadAllSuggestions();
   }
 
-  Future<void> _loadSuggestions() async {
-    final list = await ref
-        .read(supabaseLogSheetRepoProvider)
-        .getEquipmentSuggestions(_selectedSection);
-    if (mounted) {
-      setState(() => _equipmentSuggestions = list);
+  Future<void> _loadAllSuggestions() async {
+    try {
+      final repo = ref.read(supabaseLogSheetRepoProvider);
+      final eqList = await repo.getEquipmentSuggestions(_effectiveSection);
+      final secList = await repo.getSectionSuggestions();
+      final wtList = await repo.getWorkTypeSuggestions();
+
+      if (mounted) {
+        setState(() {
+          _equipmentSuggestions = eqList;
+          for (final s in secList) {
+            if (!_availableSections.contains(s)) {
+              _availableSections.add(s);
+            }
+          }
+          for (final wt in wtList) {
+            if (!_availableWorkTypes.contains(wt)) {
+              _availableWorkTypes.add(wt);
+            }
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  String get _effectiveSection {
+    if (_isCustomSection) {
+      return _customSectionController.text.trim();
     }
+    return _selectedSection;
   }
 
   @override
   void dispose() {
+    _customSectionController.dispose();
     _equipmentController.dispose();
     _descriptionController.dispose();
     super.dispose();
@@ -104,12 +132,99 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
     }
   }
 
+  void _promptAddCustomWorkType() {
+    final textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Custom Work Type'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'e.g. Refractory Relining, Calibration',
+            labelText: 'Work Type Name',
+          ),
+          textCapitalization: TextCapitalization.words,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final text = textController.text.trim();
+              if (text.isNotEmpty) {
+                setState(() {
+                  if (!_availableWorkTypes.contains(text)) {
+                    _availableWorkTypes.insert(_availableWorkTypes.length - 1, text);
+                  }
+                  _selectedWorkType = text;
+                });
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Add & Select'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _promptAddCustomSection() {
+    final textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Custom Section / Area'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'e.g. SMS4 Refractory, Yard',
+            labelText: 'Section Name',
+          ),
+          textCapitalization: TextCapitalization.words,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final text = textController.text.trim();
+              if (text.isNotEmpty) {
+                setState(() {
+                  if (!_availableSections.contains(text)) {
+                    _availableSections.add(text);
+                  }
+                  _selectedSection = text;
+                  _isCustomSection = false;
+                });
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Add & Select'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _onSubmit() async {
     final user = ref.read(authNotifierProvider.notifier).currentUser;
     if (user == null) return;
 
+    final section = _effectiveSection;
     final equipment = _equipmentController.text.trim();
     final description = _descriptionController.text.trim();
+
+    if (section.isEmpty) {
+      SnackbarHelper.showError(context, 'Please specify the section or plant area.');
+      return;
+    }
 
     if (equipment.isEmpty) {
       SnackbarHelper.showError(context, 'Please enter or select the equipment type.');
@@ -128,7 +243,6 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
 
       String? imageUrl;
       if (_pickedImageBytes != null) {
-        // Compress down to ~100 KB and upload to Supabase free storage
         imageUrl = await repo.compressAndUploadImage(_pickedImageBytes!);
       }
 
@@ -143,7 +257,7 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
       await repo.insert(
         operatorId: user.id,
         operatorName: user.username,
-        section: _selectedSection,
+        section: section,
         logDate: logDateTime.toUtc().millisecondsSinceEpoch,
         workType: _selectedWorkType,
         equipmentType: equipment,
@@ -158,11 +272,41 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
       }
     } catch (e) {
       if (mounted) {
-        SnackbarHelper.showError(context, 'Failed to save log entry: $e');
+        final errorStr = e.toString();
+        if (errorStr.contains('PGRST205') || errorStr.contains('schema cache') || errorStr.contains('not find the table')) {
+          _showDatabaseSetupDialog();
+        } else {
+          SnackbarHelper.showError(context, 'Failed to save log entry: $e');
+        }
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  void _showDatabaseSetupDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline_rounded, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Database Setup Required'),
+          ],
+        ),
+        content: const Text(
+          'The log_sheets table has not been initialized in Supabase yet.\n\n'
+          'Please execute the provided SQL setup script once in your Supabase SQL Editor to enable Work Logs.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -220,47 +364,103 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
               ),
               const Divider(height: 24),
 
-              // Section Dropdown
+              // Section Dropdown with Add Custom Section Option
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Section / Plant Area', style: theme.textTheme.titleSmall),
+                  TextButton.icon(
+                    icon: const Icon(Icons.add_rounded, size: 16),
+                    label: const Text('+ Add Custom Section', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: _promptAddCustomSection,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
               DropdownButtonFormField<String>(
-                value: _selectedSection,
+                value: _availableSections.contains(_selectedSection) ? _selectedSection : _availableSections.first,
+                isExpanded: true,
                 decoration: const InputDecoration(
-                  labelText: 'Section / Area',
+                  labelText: 'Select Section',
                   prefixIcon: Icon(Icons.apartment_rounded),
                 ),
-                items: _sections
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
+                items: [
+                  ..._availableSections.map((s) => DropdownMenuItem(value: s, child: Text(s))),
+                  const DropdownMenuItem(
+                    value: '__custom__',
+                    child: Text('✏️ Type Custom Section...', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                  ),
+                ],
                 onChanged: (val) {
-                  if (val != null) {
-                    setState(() => _selectedSection = val);
-                    _loadSuggestions();
+                  if (val == '__custom__') {
+                    setState(() {
+                      _isCustomSection = true;
+                    });
+                  } else if (val != null) {
+                    setState(() {
+                      _selectedSection = val;
+                      _isCustomSection = false;
+                    });
+                    _loadAllSuggestions();
                   }
                 },
               ),
-              const SizedBox(height: 16),
+              if (_isCustomSection) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _customSectionController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Custom Section Name',
+                    hintText: 'e.g. SMS 4 Secondary Refining, Pump Station',
+                    prefixIcon: Icon(Icons.edit_note_rounded),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ],
+              const SizedBox(height: 20),
 
-              // Work Type Selector
-              Text('Type of Work', style: theme.textTheme.titleSmall),
+              // Work Type Selector with + Add Custom Type chip
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Type of Work', style: theme.textTheme.titleSmall),
+                  TextButton.icon(
+                    icon: const Icon(Icons.add_rounded, size: 16),
+                    label: const Text('+ Custom Type', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                    onPressed: _promptAddCustomWorkType,
+                  ),
+                ],
+              ),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: _workTypes.map((type) {
-                  final isSelected = _selectedWorkType == type;
-                  return ChoiceChip(
-                    label: Text(type, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                    selected: isSelected,
-                    selectedColor: AppColors.primaryContainer,
-                    onSelected: (selected) {
-                      if (selected) setState(() => _selectedWorkType = type);
-                    },
-                  );
-                }).toList(),
+                children: [
+                  ..._availableWorkTypes.map((type) {
+                    final isSelected = _selectedWorkType == type;
+                    return ChoiceChip(
+                      label: Text(type, style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                      selected: isSelected,
+                      selectedColor: AppColors.primaryContainer,
+                      onSelected: (selected) {
+                        if (selected) setState(() => _selectedWorkType = type);
+                      },
+                    );
+                  }),
+                  ActionChip(
+                    avatar: const Icon(Icons.add_rounded, size: 16),
+                    label: const Text('Add Type', style: TextStyle(fontSize: 12)),
+                    onPressed: _promptAddCustomWorkType,
+                  ),
+                ],
               ),
               const SizedBox(height: 20),
 
               // Equipment Type with Autocomplete
-              Text('Equipment Type', style: theme.textTheme.titleSmall),
+              Text('Equipment Name / ID', style: theme.textTheme.titleSmall),
               const SizedBox(height: 6),
               Autocomplete<String>(
                 optionsBuilder: (textEditingValue) {
@@ -274,17 +474,16 @@ class _LogSheetAddScreenState extends ConsumerState<LogSheetAddScreen> {
                   _equipmentController.text = selection;
                 },
                 fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
-                  // Connect internal controller with ours
                   textEditingController.addListener(() {
                     _equipmentController.text = textEditingController.text;
                   });
                   return TextField(
                     controller: textEditingController,
                     focusNode: focusNode,
-                    decoration: InputDecoration(
-                      hintText: 'e.g. Induction Coil #2, Blower Motor, Pump #1',
-                      prefixIcon: const Icon(Icons.precision_manufacturing_rounded),
-                      helperText: 'Select existing or type a new equipment name',
+                    decoration: const InputDecoration(
+                      hintText: 'e.g. Induction Coil #2, Blower Motor, ESP, Pump #1',
+                      prefixIcon: Icon(Icons.precision_manufacturing_rounded),
+                      helperText: 'Select existing or type any new equipment name',
                     ),
                     textInputAction: TextInputAction.next,
                   );

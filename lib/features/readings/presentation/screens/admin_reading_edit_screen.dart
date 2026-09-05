@@ -50,6 +50,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
     final r = widget.reading;
     _readingType = r?.readingType ?? 'day';
     _heatNumberController = TextEditingController(text: r?.heatNumber ?? '');
+    _heatNumberController.addListener(() => setState(() {}));
     _selectedDeviceId = r?.deviceId;
     _selectedOperatorId = r?.operatorId;
     
@@ -235,6 +236,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
       readingType: _readingType,
       readingDateMs: readingDateMs,
       heatNumber: _heatNumberController.text,
+      excludeReadingId: widget.readingId ?? widget.reading?.id,
     )));
 
     Map<String, double> prevValues = {};
@@ -496,6 +498,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
         readingType: _readingType,
         readingDateMs: readingDateMs,
         heatNumber: _heatNumberController.text,
+        excludeReadingId: widget.readingId ?? widget.reading?.id,
       ))).value;
 
       if (prevReading != null && currentKwh != null && currentKvah != null) {

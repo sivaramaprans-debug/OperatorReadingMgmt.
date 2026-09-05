@@ -453,6 +453,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
       readingType: _readingType,
       readingDateMs: readingDateMs,
       heatNumber: _heatNumberController.text,
+      excludeReadingId: null,
     )));
 
     Map<String, double> prevValues = {};
@@ -960,6 +961,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
         readingType: _readingType,
         readingDateMs: readingDateMs,
         heatNumber: _heatNumberController.text,
+        excludeReadingId: null,
       ))).value;
 
       if (prevReading != null && currentKwh != null && currentKvah != null) {
