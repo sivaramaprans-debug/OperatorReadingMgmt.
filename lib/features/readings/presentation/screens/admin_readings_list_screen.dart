@@ -249,12 +249,7 @@ class _SummaryTab extends ConsumerWidget {
       children: [
         _FilterBar(readingType: readingType),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              AdminSummaryTable(readingType: readingType),
-            ],
-          ),
+          child: AdminSummaryTable(readingType: readingType),
         ),
       ],
     );

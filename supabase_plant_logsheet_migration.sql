@@ -209,10 +209,10 @@ VALUES
 )
 ON CONFLICT (id) DO NOTHING;
 
--- 8. Update in-app system settings to v1.5.7
+-- 8. Update in-app system settings to v1.5.8
 INSERT INTO system_settings (key, value)
 VALUES 
-  ('latest_app_version', '1.5.7'),
-  ('apk_download_url', 'https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/download/v1.5.7/app-release.apk'),
-  ('app_release_notes', 'v1.5.7: Fixed operator predecessor reading & live calculation for cross-business-day heats, chronological Excel copy order in Admin Heat Summary, touch-friendly Edit/Delete row actions, and real-time state invalidation.')
+  ('latest_app_version', '1.5.8'),
+  ('apk_download_url', 'https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/download/v1.5.8/app-release.apk'),
+  ('app_release_notes', 'v1.5.8: Fixed Heat Sheet cell copy button visibility with docked floating action bar, ensured chronological top-to-bottom Excel copy for cell selections, and fixed app update version check.')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
