@@ -34,13 +34,23 @@ class ValidateHeatNumberUseCase {
     required String deviceId,
     required String heatNumberText,
   }) async {
-    final proposed = int.tryParse(heatNumberText.trim());
-    if (proposed == null || proposed < 1) {
-      return HeatValidationResult.invalid('Heat number must be a positive integer.');
-    }
-
     // Fetch the most recent heat reading for this device (regardless of date)
     final lastReading = await _repo.getLastHeatReading(deviceId: deviceId);
+    final prevHeat = lastReading != null ? int.tryParse(lastReading.heatNumber.trim()) : null;
+    final expectedNext = (prevHeat != null) ? (prevHeat + 1) : 1;
+
+    final trimmed = heatNumberText.trim();
+    if (trimmed.isEmpty) {
+      return HeatValidationResult._(error: null, expectedNext: expectedNext);
+    }
+
+    final proposed = int.tryParse(trimmed);
+    if (proposed == null || proposed < 1) {
+      return HeatValidationResult.invalid(
+        'Heat number must be a positive integer.',
+        expectedNext: expectedNext,
+      );
+    }
 
     // ── No previous reading: only Heat #1 is allowed ──────────────────────────
     if (lastReading == null) {
@@ -51,7 +61,6 @@ class ValidateHeatNumberUseCase {
       );
     }
 
-    final prevHeat = int.tryParse(lastReading.heatNumber.trim());
     if (prevHeat == null) {
       // Corrupted previous data — only allow heat 1 as a safe fallback
       if (proposed == 1) return HeatValidationResult.valid;
@@ -60,8 +69,6 @@ class ValidateHeatNumberUseCase {
         expectedNext: 1,
       );
     }
-
-    final expectedNext = prevHeat + 1;
 
     // ── Case 1: consecutive continuation ──────────────────────────────────────
     if (proposed == expectedNext) {

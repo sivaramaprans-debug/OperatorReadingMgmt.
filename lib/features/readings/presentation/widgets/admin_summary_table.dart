@@ -210,7 +210,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
   static const double _subHeatW = 55.0;
   static const double _subTimeW = 70.0;
   static const double _subValW = 75.0;
-  static const double _subActW = 60.0;
+  static const double _subActW = 76.0;
   static const double _deviceBlockW = _subHeatW + _subTimeW + _subValW * 2 + _subActW + 4;
 
   static Widget _divV() => Container(width: 1, color: Colors.grey.withOpacity(0.2));
@@ -245,11 +245,14 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
     );
   }
 
-  void _copySelectedAsColumn() {
+  void _copySelectedAsColumn({bool chronological = true}) {
     if (_selectedCells.isEmpty) return;
     final sorted = _selectedCells.values.toList()
       ..sort((a, b) {
-        final rowCmp = a.row.compareTo(b.row);
+        // Table display has newest at top (row 0) and oldest at bottom (row max).
+        // For Excel pasting chronologically (Heat 1 -> Heat 8 / oldest to newest),
+        // we sort row descending (b.row.compareTo(a.row)).
+        final rowCmp = chronological ? b.row.compareTo(a.row) : a.row.compareTo(b.row);
         if (rowCmp != 0) return rowCmp;
         return a.col.compareTo(b.col);
       });
@@ -263,7 +266,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
           children: [
             const Icon(Icons.table_chart_rounded, color: Colors.greenAccent, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text('${sorted.length} values copied as 1 Vertical Column (Paste in Excel)')),
+            Expanded(child: Text('${sorted.length} values copied in ${chronological ? 'Chronological Order (Heat 1→N / for Excel)' : 'Display Order'}')),
           ],
         ),
         duration: const Duration(seconds: 3),
@@ -272,11 +275,11 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
     );
   }
 
-  void _copySelectedAsGrid() {
+  void _copySelectedAsGrid({bool chronological = true}) {
     if (_selectedCells.isEmpty) return;
     final sorted = _selectedCells.values.toList()
       ..sort((a, b) {
-        final rowCmp = a.row.compareTo(b.row);
+        final rowCmp = chronological ? b.row.compareTo(a.row) : a.row.compareTo(b.row);
         if (rowCmp != 0) return rowCmp;
         return a.col.compareTo(b.col);
       });
@@ -288,7 +291,13 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
     }
 
     final StringBuffer buffer = StringBuffer();
-    for (final r in rowMap.keys.toList()..sort()) {
+    final rowKeys = rowMap.keys.toList();
+    if (chronological) {
+      rowKeys.sort((a, b) => b.compareTo(a)); // bottom row (Heat 1) first
+    } else {
+      rowKeys.sort(); // top row (newest) first
+    }
+    for (final r in rowKeys) {
       final cols = rowMap[r]!..sort((a, b) => a.col.compareTo(b.col));
       buffer.writeln(cols.map((c) => c.value == '—' ? '' : c.value).join('\t'));
     }
@@ -301,7 +310,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
           children: [
             const Icon(Icons.grid_on_rounded, color: Colors.greenAccent, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text('${sorted.length} cells copied as Grid (Tab-separated for Excel)')),
+            Expanded(child: Text('${sorted.length} cells copied as Grid in ${chronological ? 'Chronological Order (Heat 1→N / for Excel)' : 'Display Order'}')),
           ],
         ),
         duration: const Duration(seconds: 3),
@@ -423,7 +432,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
     final isHeat = widget.showHeatNumber;
 
     const double daySubValW = 75.0;
-    const double daySubActW = 60.0;
+    const double daySubActW = 76.0;
     const double dayDeviceBlockW = daySubValW * 2 + daySubActW + 2;
 
     final deviceBlockW = isHeat ? _deviceBlockW : dayDeviceBlockW;
@@ -611,13 +620,13 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                     const SizedBox(width: 6),
                     ElevatedButton.icon(
                       icon: const Icon(Icons.copy_rounded, size: 16),
-                      label: Text('Copy (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      label: Text('Copy for Excel (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: AppColors.primary,
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
-                      onPressed: _copySelectedAsColumn,
+                      onPressed: () => _copySelectedAsColumn(chronological: true),
                     ),
                   ],
                 ),
@@ -711,7 +720,8 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                           });
 
                           if (collectedValues.isNotEmpty) {
-                            Clipboard.setData(ClipboardData(text: collectedValues.join('\n')));
+                            final chronologicalValues = collectedValues.reversed.toList();
+                            Clipboard.setData(ClipboardData(text: chronologicalValues.join('\n')));
                             ScaffoldMessenger.of(context).hideCurrentSnackBar();
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
@@ -719,7 +729,7 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                                   children: [
                                     const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
                                     const SizedBox(width: 8),
-                                    Expanded(child: Text('${collectedValues.length} values for "$devName $colType" copied as 1 Vertical Column (Ready for Excel)')),
+                                    Expanded(child: Text('${chronologicalValues.length} values for "$devName $colType" copied (Heat 1→N for Excel)')),
                                   ],
                                 ),
                                 duration: const Duration(seconds: 3),
@@ -822,21 +832,32 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                       children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.edit_rounded, size: 14),
-                                          onPressed: () {
-                                            context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
-                                          },
-                                          tooltip: 'Edit',
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(6),
+                                            onTap: () async {
+                                              await context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
+                                              ref.invalidate(adminHeatSummaryReadingsProvider);
+                                              ref.invalidate(adminDaySummaryReadingsProvider);
+                                              ref.invalidate(adminReadingsProvider);
+                                            },
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                              child: Icon(Icons.edit_rounded, size: 16, color: Colors.blueGrey),
+                                            ),
+                                          ),
                                         ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
-                                          onPressed: () => _deleteReading(context, ref, r.id),
-                                          tooltip: 'Delete',
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(6),
+                                            onTap: () => _deleteReading(context, ref, r.id),
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                              child: Icon(Icons.delete_rounded, size: 16, color: Colors.red),
+                                            ),
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -901,21 +922,32 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                                     child: Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                       children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.edit_rounded, size: 14),
-                                          onPressed: () {
-                                            context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
-                                          },
-                                          tooltip: 'Edit',
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(6),
+                                            onTap: () async {
+                                              await context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
+                                              ref.invalidate(adminHeatSummaryReadingsProvider);
+                                              ref.invalidate(adminDaySummaryReadingsProvider);
+                                              ref.invalidate(adminReadingsProvider);
+                                            },
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                              child: Icon(Icons.edit_rounded, size: 16, color: Colors.blueGrey),
+                                            ),
+                                          ),
                                         ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete_rounded, size: 14, color: Colors.red),
-                                          onPressed: () => _deleteReading(context, ref, r.id),
-                                          tooltip: 'Delete',
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
+                                        Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(6),
+                                            onTap: () => _deleteReading(context, ref, r.id),
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                              child: Icon(Icons.delete_rounded, size: 16, color: Colors.red),
+                                            ),
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -956,10 +988,31 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
       ),
     );
     if (confirm == true) {
-      await ref.read(supabaseReadingsRepoProvider).delete(readingId);
-      ref.invalidate(adminReadingsProvider);
-      ref.invalidate(adminDaySummaryReadingsProvider);
-      ref.invalidate(adminHeatSummaryReadingsProvider);
+      try {
+        await ref.read(supabaseReadingsRepoProvider).delete(readingId);
+        ref.invalidate(adminReadingsProvider);
+        ref.invalidate(adminDaySummaryReadingsProvider);
+        ref.invalidate(adminHeatSummaryReadingsProvider);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Reading deleted successfully'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete reading: $e'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
     }
   }
 }

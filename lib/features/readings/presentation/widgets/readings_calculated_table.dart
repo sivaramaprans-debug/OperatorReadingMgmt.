@@ -141,10 +141,11 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     );
   }
 
-  void _copySingleColumn(String colName, List<String> values) {
+  void _copySingleColumn(String colName, List<String> values, {bool chronological = true}) {
     final validVals = values.where((v) => v.isNotEmpty && v != '—').toList();
     if (validVals.isEmpty) return;
-    final text = validVals.join('\n');
+    final orderedVals = chronological ? validVals.reversed.toList() : validVals;
+    final text = orderedVals.join('\n');
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -153,7 +154,7 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
           children: [
             const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text('${validVals.length} values for "$colName" copied as 1 Vertical Column (Ready for Excel)')),
+            Expanded(child: Text('${orderedVals.length} values for "$colName" copied (Heat 1→N for Excel)')),
           ],
         ),
         duration: const Duration(seconds: 3),
@@ -162,11 +163,14 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     );
   }
 
-  void _copySelectedCellsAsColumn() {
+  void _copySelectedCellsAsColumn({bool chronological = true}) {
     if (_selectedCells.isEmpty) return;
     final sorted = _selectedCells.values.toList()
       ..sort((a, b) {
-        final rowCmp = a.row.compareTo(b.row);
+        // Visual table has newest at top (row 0), oldest at bottom (row max).
+        // For chronological Excel order (Heat 1 -> Heat 8 / oldest to newest),
+        // we sort row descending (b.row.compareTo(a.row)).
+        final rowCmp = chronological ? b.row.compareTo(a.row) : a.row.compareTo(b.row);
         if (rowCmp != 0) return rowCmp;
         return a.col.compareTo(b.col);
       });
@@ -180,7 +184,7 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
           children: [
             const Icon(Icons.table_rows_rounded, color: Colors.greenAccent, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text('${sorted.length} values copied as 1 Vertical Column (Paste in Excel)')),
+            Expanded(child: Text('${sorted.length} values copied in ${chronological ? 'Chronological Order (Heat 1→N / for Excel)' : 'Display Order'}')),
           ],
         ),
         duration: const Duration(seconds: 3),
@@ -189,11 +193,11 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     );
   }
 
-  void _copySelectedCellsAsGrid() {
+  void _copySelectedCellsAsGrid({bool chronological = true}) {
     if (_selectedCells.isEmpty) return;
     final sorted = _selectedCells.values.toList()
       ..sort((a, b) {
-        final rowCmp = a.row.compareTo(b.row);
+        final rowCmp = chronological ? b.row.compareTo(a.row) : a.row.compareTo(b.row);
         if (rowCmp != 0) return rowCmp;
         return a.col.compareTo(b.col);
       });
@@ -204,7 +208,13 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     }
 
     final StringBuffer buffer = StringBuffer();
-    for (final r in rowMap.keys.toList()..sort()) {
+    final rowKeys = rowMap.keys.toList();
+    if (chronological) {
+      rowKeys.sort((a, b) => b.compareTo(a)); // bottom row (Heat 1) first
+    } else {
+      rowKeys.sort(); // top row (newest) first
+    }
+    for (final r in rowKeys) {
       final cols = rowMap[r]!..sort((a, b) => a.col.compareTo(b.col));
       buffer.writeln(cols.map((c) => c.value == '—' ? '' : c.value).join('\t'));
     }
@@ -217,7 +227,7 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
           children: [
             const Icon(Icons.grid_on_rounded, color: Colors.greenAccent, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text('${sorted.length} cells copied as Grid (Tab-separated for Excel)')),
+            Expanded(child: Text('${sorted.length} cells copied as Grid in ${chronological ? 'Chronological Order (Heat 1→N / for Excel)' : 'Display Order'}')),
           ],
         ),
         duration: const Duration(seconds: 3),
@@ -606,13 +616,13 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                     const SizedBox(width: 6),
                     ElevatedButton.icon(
                       icon: const Icon(Icons.copy_rounded, size: 16),
-                      label: Text('Copy (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      label: Text('Copy for Excel (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: AppColors.primary,
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
-                      onPressed: _copySelectedCellsAsColumn,
+                      onPressed: () => _copySelectedCellsAsColumn(chronological: true),
                     ),
                   ],
                 ),
@@ -1072,21 +1082,32 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                   children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit_rounded, size: 16),
-                                      onPressed: () {
-                                        context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
-                                      },
-                                      tooltip: 'Edit',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
+                                    Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(6),
+                                        onTap: () async {
+                                          await context.push(RoutePaths.adminReadingEditPath(r.id), extra: r);
+                                          ref.invalidate(adminReadingsProvider);
+                                          ref.invalidate(adminHeatSummaryReadingsProvider);
+                                          ref.invalidate(adminDaySummaryReadingsProvider);
+                                        },
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                          child: Icon(Icons.edit_rounded, size: 16, color: Colors.blueGrey),
+                                        ),
+                                      ),
                                     ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_rounded, size: 16, color: Colors.red),
-                                      onPressed: () => _deleteReading(context, ref, r.id),
-                                      tooltip: 'Delete',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
+                                    Material(
+                                      color: Colors.transparent,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(6),
+                                        onTap: () => _deleteReading(context, ref, r.id),
+                                        child: const Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                          child: Icon(Icons.delete_rounded, size: 16, color: Colors.red),
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1126,10 +1147,31 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
       ),
     );
     if (confirm == true) {
-      await ref.read(supabaseReadingsRepoProvider).delete(readingId);
-      ref.invalidate(adminReadingsProvider);
-      ref.invalidate(adminDaySummaryReadingsProvider);
-      ref.invalidate(adminHeatSummaryReadingsProvider);
+      try {
+        await ref.read(supabaseReadingsRepoProvider).delete(readingId);
+        ref.invalidate(adminReadingsProvider);
+        ref.invalidate(adminDaySummaryReadingsProvider);
+        ref.invalidate(adminHeatSummaryReadingsProvider);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Reading deleted successfully'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete reading: $e'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
     }
   }
 }

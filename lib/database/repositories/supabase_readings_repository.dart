@@ -271,55 +271,39 @@ class SupabaseReadingsRepository {
         .order('created_at', ascending: false)
         .limit(100);
 
-    final readings = (data as List).map((m) => SupabaseReading.fromMap(m as Map<String, dynamic>)).toList();
+    final readings = (data as List)
+        .map((m) => SupabaseReading.fromMap(m as Map<String, dynamic>))
+        .where((r) => r.id != excludeReadingId)
+        .toList();
     if (readings.isEmpty) return null;
 
     final currentHeatInt = int.tryParse(heatNumber.trim());
-    final currentBizDay = AppDateUtils.toBusinessDayMidnightUtcMs(readingDateMs);
 
-    // 1. If we have a valid heat number (e.g. 6):
-    // Look for largest heat number < currentHeatInt on the SAME business day
-    if (currentHeatInt != null) {
-      final sameDayPredecessors = readings.where((r) {
-        if (r.id == excludeReadingId) return false;
-        final rBizDay = AppDateUtils.toBusinessDayMidnightUtcMs(r.readingDate);
-        if (rBizDay != currentBizDay) return false;
+    // 1. If we have a specific heat number > 1 (e.g. 8 or 9):
+    // Find the closest preceding reading with heat number < currentHeatInt
+    if (currentHeatInt != null && currentHeatInt > 1) {
+      final validPredecessors = readings.where((r) {
         final rh = int.tryParse(r.heatNumber.trim()) ?? 0;
         return rh < currentHeatInt;
       }).toList();
 
-      if (sameDayPredecessors.isNotEmpty) {
-        sameDayPredecessors.sort((a, b) {
+      if (validPredecessors.isNotEmpty) {
+        validPredecessors.sort((a, b) {
+          final dateCmp = b.readingDate.compareTo(a.readingDate);
+          if (dateCmp != 0) return dateCmp;
+          final crtCmp = b.createdAt.compareTo(a.createdAt);
+          if (crtCmp != 0) return crtCmp;
           final ha = int.tryParse(a.heatNumber.trim()) ?? 0;
           final hb = int.tryParse(b.heatNumber.trim()) ?? 0;
           return hb.compareTo(ha);
         });
-        return sameDayPredecessors.first;
+        return validPredecessors.first;
       }
     }
 
-    // 2. If heat is #1 or no smaller heat on same day, find latest heat on an earlier business day:
-    final earlierDayReadings = readings.where((r) {
-      if (r.id == excludeReadingId) return false;
-      final rBizDay = AppDateUtils.toBusinessDayMidnightUtcMs(r.readingDate);
-      return rBizDay < currentBizDay;
-    }).toList();
-
-    if (earlierDayReadings.isNotEmpty) {
-      earlierDayReadings.sort((a, b) {
-        final dateCmp = b.readingDate.compareTo(a.readingDate);
-        if (dateCmp != 0) return dateCmp;
-        final ha = int.tryParse(a.heatNumber.trim()) ?? 0;
-        final hb = int.tryParse(b.heatNumber.trim()) ?? 0;
-        return hb.compareTo(ha);
-      });
-      return earlierDayReadings.first;
-    }
-
-    // 3. Fallback: filter out excludeReadingId and return oldest/closest before readingDateMs
-    final candidates = readings.where((r) => r.id != excludeReadingId).toList();
-    if (candidates.isEmpty) return null;
-    return candidates.first;
+    // 2. If heat number is empty, or heat number is 1 (new cycle), or no smaller heat was found:
+    // The previous physical reading is simply the most recently recorded reading before this one.
+    return readings.first;
   }
 
   /// Returns the most recently submitted heat reading for a device (by created_at).

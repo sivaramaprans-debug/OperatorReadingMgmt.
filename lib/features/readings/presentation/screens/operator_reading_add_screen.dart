@@ -1063,8 +1063,9 @@ class _HeatHintWidgetState extends ConsumerState<_HeatHintWidget> {
         error: (_, __) => const SizedBox.shrink(),
         data: (result) {
           if (heatText.isEmpty) {
+            final nextNum = result.expectedNext ?? 1;
             return Text(
-              'Enter the next heat number. A new cycle must start from Heat #1.',
+              'Enter heat number. Expected next: Heat #$nextNum (or #1 to start a new cycle).',
               style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             );
           }

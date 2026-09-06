@@ -14,9 +14,6 @@ final validateHeatNumberUseCaseProvider = Provider<ValidateHeatNumberUseCase>((r
 ///   final result = ref.watch(heatValidationProvider((deviceId: id, heatNumber: text)));
 final heatValidationProvider = FutureProvider.family<HeatValidationResult, ({String deviceId, String heatNumber})>(
   (ref, params) async {
-    if (params.heatNumber.trim().isEmpty) {
-      return HeatValidationResult.valid;
-    }
     final useCase = ref.read(validateHeatNumberUseCaseProvider);
     return useCase.call(
       deviceId: params.deviceId,

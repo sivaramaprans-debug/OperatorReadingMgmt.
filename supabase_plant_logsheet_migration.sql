@@ -1,5 +1,5 @@
 -- ============================================================================
--- Plant-Level Log Sheet System Migration Script
+-- Plant-Level Log Sheet System Migration Script with RLS Policies
 -- Run this in your Supabase SQL Editor (https://supabase.com/dashboard)
 -- ============================================================================
 
@@ -39,7 +39,27 @@ ALTER TABLE log_sheets ADD COLUMN IF NOT EXISTS department_name TEXT;
 ALTER TABLE log_sheets ADD COLUMN IF NOT EXISTS equipment_id TEXT;
 ALTER TABLE log_sheets ADD COLUMN IF NOT EXISTS nameplate_snapshot JSONB;
 
--- 5. Pre-seed Default Industrial Divisions (Editable & Removable by Admin)
+-- 5. Row Level Security (RLS) Configuration & Policies
+ALTER TABLE plant_departments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE plant_equipments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to plant_departments" ON plant_departments;
+CREATE POLICY "Allow all access to plant_departments" 
+ON plant_departments 
+FOR ALL 
+TO public 
+USING (true) 
+WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all access to plant_equipments" ON plant_equipments;
+CREATE POLICY "Allow all access to plant_equipments" 
+ON plant_equipments 
+FOR ALL 
+TO public 
+USING (true) 
+WITH CHECK (true);
+
+-- 6. Pre-seed Default Industrial Divisions (Editable & Removable by Admin)
 INSERT INTO plant_departments (id, name, code, description, sections, work_types, is_active, created_at)
 VALUES 
 (
@@ -107,7 +127,7 @@ ON CONFLICT (id) DO UPDATE SET
   code = EXCLUDED.code,
   sections = EXCLUDED.sections;
 
--- 6. Sample Equipments with dynamic Nameplate details (Editable & Removable)
+-- 7. Pre-seed Sample Equipments with dynamic Nameplate details
 INSERT INTO plant_equipments (id, department_id, department_name, section, name, equipment_tag, nameplate_details, created_by, is_active, created_at)
 VALUES
 (
@@ -188,3 +208,11 @@ VALUES
   1725532800003
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- 8. Update in-app system settings to v1.5.7
+INSERT INTO system_settings (key, value)
+VALUES 
+  ('latest_app_version', '1.5.7'),
+  ('apk_download_url', 'https://github.com/sivaramaprans-debug/OperatorReadingMgmt./releases/download/v1.5.7/app-release.apk'),
+  ('app_release_notes', 'v1.5.7: Fixed operator predecessor reading & live calculation for cross-business-day heats, chronological Excel copy order in Admin Heat Summary, touch-friendly Edit/Delete row actions, and real-time state invalidation.')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
