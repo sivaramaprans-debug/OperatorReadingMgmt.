@@ -37,14 +37,20 @@ jobs:
       - name: Build Release APK
         run: flutter build apk --release --android-skip-build-dependency-validation
 
+      - name: Prepare Version-Named APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/OperatorReadingMgmt-${{ github.ref_name }}.apk
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            build/app/outputs/flutter-apk/OperatorReadingMgmt-${{ github.ref_name }}.apk
+            build/app/outputs/flutter-apk/app-release.apk
           name: Release ${{ github.ref_name }}
           body: |
-            ## Operator Reading Management App Release
-            - Download `app-release.apk` below and install/update on Android.
+            ## Operator Reading Management App Release (${{ github.ref_name }})
+            - Download `OperatorReadingMgmt-${{ github.ref_name }}.apk` below and install/update on Android.
             - Includes all heat & day reading calculations, chronological sorting, and dynamic metrics.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

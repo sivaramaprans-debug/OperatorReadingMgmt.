@@ -40,8 +40,11 @@ class AppUpdateService {
         final releaseNotes = (json['body'] as String? ?? 'New version available with improvements.').trim();
         final assets = json['assets'] as List? ?? [];
         final apkAsset = assets.firstWhere(
-          (a) => (a['name'] as String? ?? '').endsWith('.apk'),
-          orElse: () => null,
+          (a) => (a['name'] as String? ?? '').startsWith('OperatorReadingMgmt') && (a['name'] as String? ?? '').endsWith('.apk'),
+          orElse: () => assets.firstWhere(
+            (a) => (a['name'] as String? ?? '').endsWith('.apk'),
+            orElse: () => null,
+          ),
         );
         final downloadUrl = apkAsset != null
             ? (apkAsset['browser_download_url'] as String? ?? '')
