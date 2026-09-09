@@ -98,41 +98,41 @@ class _AdminDeviceDetailScreenState extends ConsumerState<AdminDeviceDetailScree
                 device.requiresHeatDay ? 'Enabled' : 'Disabled'),
             const SizedBox(height: 16),
 
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(device.requiresHeatDay ? 'Heat Units' : 'Matrix Units', style: theme.textTheme.titleMedium),
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Builder(builder: (context) {
-                Map<String, dynamic> heatFactors = {};
-                try { heatFactors = jsonDecode(device.heatUnitFactors) as Map<String, dynamic>; } catch (_) {}
-                return device.matrix.isEmpty
-                    ? Text('No units assigned', style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant))
-                    : Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: device.matrix
-                            .split(',')
-                            .map((u) => u.trim())
-                            .where((u) => u.isNotEmpty)
-                            .map((u) {
-                              final f = heatFactors[u];
-                              final label = f != null ? '$u  ×${(f as num).toStringAsFixed(1)}' : u;
-                              return Chip(
-                                label: Text(label),
-                                backgroundColor: AppColors.primaryContainer,
-                                labelStyle: const TextStyle(color: Color(0xFF001E3F), fontWeight: FontWeight.w600),
-                                side: BorderSide.none,
-                              );
-                            })
-                            .toList(),
-                      );
-              }),
-            ),
             if (device.requiresHeatDay) ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Heat Units', style: theme.textTheme.titleMedium),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Builder(builder: (context) {
+                  Map<String, dynamic> heatFactors = {};
+                  try { heatFactors = jsonDecode(device.heatUnitFactors) as Map<String, dynamic>; } catch (_) {}
+                  return device.matrix.isEmpty
+                      ? Text('No units assigned', style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant))
+                      : Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: device.matrix
+                              .split(',')
+                              .map((u) => u.trim())
+                              .where((u) => u.isNotEmpty)
+                              .map((u) {
+                                final f = heatFactors[u];
+                                final label = f != null ? '$u  ×${(f as num).toStringAsFixed(1)}' : u;
+                                return Chip(
+                                  label: Text(label),
+                                  backgroundColor: AppColors.primaryContainer,
+                                  labelStyle: const TextStyle(color: Color(0xFF001E3F), fontWeight: FontWeight.w600),
+                                  side: BorderSide.none,
+                                );
+                              })
+                              .toList(),
+                        );
+                }),
+              ),
               const SizedBox(height: 16),
               Align(
                 alignment: Alignment.centerLeft,
@@ -165,6 +165,47 @@ class _AdminDeviceDetailScreenState extends ConsumerState<AdminDeviceDetailScree
                                 );
                               })
                               .toList(),
+                        );
+                }),
+              ),
+            ] else ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Matrix Units', style: theme.textTheme.titleMedium),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Builder(builder: (context) {
+                  Map<String, dynamic> dayFactors = {};
+                  try { dayFactors = jsonDecode(device.dayUnitFactors) as Map<String, dynamic>; } catch (_) {}
+                  
+                  final rawUnits = device.dayMatrix.isNotEmpty
+                      ? device.dayMatrix
+                      : (device.matrix.isNotEmpty ? device.matrix : (device.deviceCategory == 'water' ? 'LTRS' : 'KWH'));
+                  
+                  final unitsList = rawUnits
+                      .split(',')
+                      .map((u) => u.trim())
+                      .where((u) => u.isNotEmpty)
+                      .toList();
+
+                  return unitsList.isEmpty
+                      ? Text('No units assigned', style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant))
+                      : Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: unitsList.map((u) {
+                            final f = (dayFactors[u] as num?)?.toDouble() ?? device.multiplicationFactor;
+                            final label = f > 1.0 ? '$u  ×${f.toStringAsFixed(1)}' : u;
+                            return Chip(
+                              label: Text(label),
+                              backgroundColor: AppColors.secondaryContainer,
+                              labelStyle: const TextStyle(color: Color(0xFF00201D), fontWeight: FontWeight.w600),
+                              side: BorderSide.none,
+                            );
+                          }).toList(),
                         );
                 }),
               ),

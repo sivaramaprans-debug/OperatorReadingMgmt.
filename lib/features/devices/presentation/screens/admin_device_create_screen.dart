@@ -115,10 +115,10 @@ class _AdminDeviceCreateScreenState extends ConsumerState<AdminDeviceCreateScree
 
     if (_isDedusting) {
       finalDayMatrix = ['KWH'];
-      dayFactors     = {'KWH': 1.0};
+      dayFactors     = {'KWH': mf};
     } else if (_isWater) {
       finalDayMatrix = ['LTRS'];
-      dayFactors     = {'LTRS': 1.0};
+      dayFactors     = {'LTRS': mf};
     } else {
       final fHeat = _requiresHeatDay ? _selectedHeatUnits : <String>{};
       finalMatrix    = fHeat.toList();

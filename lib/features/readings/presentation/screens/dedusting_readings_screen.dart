@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/app_date_utils.dart';
+import '../../../../core/utils/reading_calculation_utils.dart';
+import '../../../../database/repositories/supabase_meter_replacement_repository.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 import '../../../../database/repositories/supabase_operators_repository.dart';
 import '../../../../database/supabase_providers.dart';
@@ -219,7 +221,7 @@ class _DedFilterBar extends ConsumerWidget {
 
 // ── Sheet body: operator-grouped, columnar table ──────────────────────────────
 
-class _DedSheetBody extends StatelessWidget {
+class _DedSheetBody extends ConsumerWidget {
   const _DedSheetBody({required this.readings, required this.theme});
 
   final List<SupabaseReadingWithDetails> readings;
@@ -238,7 +240,10 @@ class _DedSheetBody extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Watch meter replacements for dynamic baseline & history support
+    final allReplacements = ref.watch(allMeterReplacementsProvider).valueOrNull ?? [];
+
     // Group by operator
     final Map<String, List<SupabaseReadingWithDetails>> byOp = {};
     for (final r in readings) {
@@ -277,23 +282,38 @@ class _DedSheetBody extends StatelessWidget {
             final devRwds = byDevice[devName]!
               ..sort((a, b) =>
                   a.reading.readingDate.compareTo(b.reading.readingDate));
+            final devId = devRwds.firstOrNull?.reading.deviceId ?? '';
+            final devReplacements = allReplacements.where((rep) => rep.deviceId == devId).toList();
+
             final dateMap = <int, Map<String, double?>>{};
             for (int i = 0; i < devRwds.length; i++) {
               final cur    = devRwds[i];
               final vals   = _parseVals(cur.reading.readingValues);
               final metric = 'KWH';
-              final mf     = cur.deviceMf;
               final reading = vals[metric] ?? vals.values.firstOrNull;
 
               double? diff;
               double? consumption;
               if (i > 0) {
+                final prevRwd = devRwds[i - 1];
                 final prevVals =
-                    _parseVals(devRwds[i - 1].reading.readingValues);
+                    _parseVals(prevRwd.reading.readingValues);
                 final prev = prevVals[metric] ?? prevVals.values.firstOrNull;
                 if (reading != null && prev != null) {
-                  diff        = reading - prev;
-                  consumption = diff * mf;
+                  final calc = ReadingCalculationUtils.calculateReadingConsumption(
+                    currentReading: reading,
+                    currentDateMs: cur.reading.readingDate,
+                    prevReading: prev,
+                    prevDateMs: prevRwd.reading.readingDate,
+                    unit: metric,
+                    readingType: 'day',
+                    currentDeviceMf: cur.deviceMf,
+                    dayUnitFactorsJson: cur.deviceDayUnitFactors,
+                    heatUnitFactorsJson: cur.deviceHeatUnitFactors,
+                    replacements: devReplacements,
+                  );
+                  diff        = calc.diff;
+                  consumption = calc.consumption;
                 }
               }
               final bizDay = AppDateUtils.toBusinessDayMidnightUtcMs(cur.reading.readingDate);
@@ -305,6 +325,7 @@ class _DedSheetBody extends StatelessWidget {
             }
             devDateData[devName] = dateMap;
           }
+
 
         return Card(
           margin: const EdgeInsets.only(bottom: 20),

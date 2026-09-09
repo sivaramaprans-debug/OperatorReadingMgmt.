@@ -4,6 +4,7 @@ import 'repositories/supabase_devices_repository.dart';
 import 'repositories/supabase_readings_repository.dart';
 import 'repositories/supabase_audit_repository.dart';
 import 'repositories/supabase_settings_repository.dart';
+import 'repositories/supabase_meter_replacement_repository.dart';
 
 /// Global Supabase repository providers — use these instead of the Drift DAO providers.
 
@@ -21,6 +22,9 @@ final supabaseAuditRepoProvider =
 
 final supabaseSettingsRepoProvider =
     Provider<SupabaseSettingsRepository>((ref) => SupabaseSettingsRepository());
+
+final supabaseMeterReplacementRepoProvider =
+    Provider<SupabaseMeterReplacementRepository>((ref) => SupabaseMeterReplacementRepository());
 
 // ── Convenience FutureProviders ─────────────────────────────────────────────
 
@@ -41,3 +45,10 @@ final activeDevicesSupabaseProvider =
     FutureProvider.autoDispose<List<SupabaseDevice>>((ref) {
   return ref.watch(supabaseDevicesRepoProvider).getActive();
 });
+
+/// All meter replacements history across devices.
+final allMeterReplacementsProvider =
+    FutureProvider.autoDispose<List<SupabaseMeterReplacement>>((ref) {
+  return ref.watch(supabaseMeterReplacementRepoProvider).getAll();
+});
+

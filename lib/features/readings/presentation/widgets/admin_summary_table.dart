@@ -82,7 +82,14 @@ class AdminSummaryTable extends ConsumerWidget {
           final deviceFactors = <String, Map<String, double>>{};
           for (final d in qualifiedDevices) {
             final factorJson = readingType == 'heat' ? d.heatUnitFactors : d.dayUnitFactors;
-            deviceFactors[d.id] = _parseFactors(factorJson);
+            final map = _parseFactors(factorJson);
+            if (!map.containsKey('KWH') && d.multiplicationFactor > 1.0) {
+              map['KWH'] = d.multiplicationFactor;
+            }
+            if (!map.containsKey('KWHLT') && d.multiplicationFactor > 1.0) {
+              map['KWHLT'] = d.multiplicationFactor;
+            }
+            deviceFactors[d.id] = map;
           }
 
           // Build device name map
@@ -95,6 +102,8 @@ class AdminSummaryTable extends ConsumerWidget {
               readingsByDevice.putIfAbsent(rwd.reading.deviceId, () => []).add(rwd);
             }
           }
+
+          final allReplacements = ref.watch(allMeterReplacementsProvider).valueOrNull ?? [];
 
           // Compute differences per device (sorted oldest→newest for calculation)
           final diffMap = <String, Map<String, double?>>{};
@@ -110,6 +119,8 @@ class AdminSummaryTable extends ConsumerWidget {
               return ha.compareTo(hb);
             });
 
+            final devReplacements = allReplacements.where((r) => r.deviceId == deviceId).toList();
+
             for (int i = 0; i < deviceRows.length; i++) {
               final cur = deviceRows[i];
               final curVals = _parseValues(cur.reading.readingValues);
@@ -118,10 +129,23 @@ class AdminSummaryTable extends ConsumerWidget {
                 diffs['KWH'] = null;
                 diffs['KWHLT'] = null;
               } else {
-                final prevVals = _parseValues(deviceRows[i - 1].reading.readingValues);
+                final prevRwd = deviceRows[i - 1];
+                final prevVals = _parseValues(prevRwd.reading.readingValues);
                 for (final u in ['KWH', 'KWHLT']) {
                   if (curVals.containsKey(u) && prevVals.containsKey(u)) {
-                    diffs[u] = ReadingCalculationUtils.calculateDifference(curVals[u]!, prevVals[u]!);
+                    final calc = ReadingCalculationUtils.calculateReadingConsumption(
+                      currentReading: curVals[u]!,
+                      currentDateMs: cur.reading.readingDate,
+                      prevReading: prevVals[u]!,
+                      prevDateMs: prevRwd.reading.readingDate,
+                      unit: u,
+                      readingType: readingType,
+                      currentDeviceMf: cur.deviceMf,
+                      dayUnitFactorsJson: cur.deviceDayUnitFactors,
+                      heatUnitFactorsJson: cur.deviceHeatUnitFactors,
+                      replacements: devReplacements,
+                    );
+                    diffs[u] = calc.diff;
                   } else {
                     diffs[u] = null;
                   }

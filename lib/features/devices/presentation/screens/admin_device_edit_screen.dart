@@ -93,6 +93,15 @@ class _AdminDeviceEditScreenState extends ConsumerState<AdminDeviceEditScreen> {
         ? {}
         : existingDayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
 
+    // If day matrix is empty and device has a category like dedusting/water:
+    if (_selectedDayUnits.isEmpty && device != null) {
+      if (device.deviceCategory == 'water') {
+        _selectedDayUnits.add('LTRS');
+      } else {
+        _selectedDayUnits.add('KWH');
+      }
+    }
+
     _requiresHeatDay = device?.requiresHeatDay ?? false;
 
     // Pre-populate heat factor controllers from saved JSON
@@ -112,8 +121,12 @@ class _AdminDeviceEditScreenState extends ConsumerState<AdminDeviceEditScreen> {
       _heatFactorControllers[unit] = TextEditingController(text: val);
     }
     for (final unit in _selectedDayUnits) {
-      final val = savedDayFactors[unit]?.toString() ?? '1.0';
-      _dayFactorControllers[unit] = TextEditingController(text: val);
+      var val = savedDayFactors[unit]?.toString();
+      // If factor was missing or 1.0, but device has an explicit multiplicationFactor > 1.0:
+      if ((val == null || val == '1.0' || val == '1') && device != null && device.multiplicationFactor > 1.0) {
+        val = device.multiplicationFactor.toString();
+      }
+      _dayFactorControllers[unit] = TextEditingController(text: val ?? '1.0');
     }
   }
 
@@ -136,18 +149,34 @@ class _AdminDeviceEditScreenState extends ConsumerState<AdminDeviceEditScreen> {
   Future<void> _onSubmit() async {
     final notifier = ref.read(deviceFormNotifierProvider.notifier);
     final finalHeatUnits = _requiresHeatDay ? _selectedHeatUnits : <String>{};
-    final finalDayUnits = _requiresHeatDay ? _selectedDayUnits : _selectedDayUnits;
+    final finalDayUnits = _selectedDayUnits;
+
+    final heatFactorMap = _buildFactorMap(finalHeatUnits, _heatFactorControllers);
+    final dayFactorMap = _buildFactorMap(finalDayUnits, _dayFactorControllers);
+
+    // Keep primary multiplication factor in sync with unit factors
+    double effectiveMf = widget.device?.multiplicationFactor ?? 1.0;
+    if (dayFactorMap.containsKey('KWH')) {
+      effectiveMf = dayFactorMap['KWH']!;
+    } else if (dayFactorMap.containsKey('LTRS')) {
+      effectiveMf = dayFactorMap['LTRS']!;
+    } else if (dayFactorMap.isNotEmpty) {
+      effectiveMf = dayFactorMap.values.first;
+    } else if (heatFactorMap.isNotEmpty) {
+      effectiveMf = heatFactorMap.values.first;
+    }
 
     await notifier.editDevice(
       widget.deviceId,
       _nameController.text,
-      1.0,
+      effectiveMf,
       matrix: finalHeatUnits.toList(),
       dayMatrix: finalDayUnits.toList(),
       requiresHeatDay: _requiresHeatDay,
-      heatUnitFactors: _buildFactorMap(finalHeatUnits, _heatFactorControllers),
-      dayUnitFactors: _buildFactorMap(finalDayUnits, _dayFactorControllers),
+      heatUnitFactors: heatFactorMap,
+      dayUnitFactors: dayFactorMap,
     );
+
 
     if (!mounted) return;
     final state = ref.read(deviceFormNotifierProvider);
