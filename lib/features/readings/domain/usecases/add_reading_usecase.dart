@@ -28,8 +28,11 @@ class AddReadingUseCase {
       return (null, const ValidationFailure('Invalid reading type.'));
     }
 
+    final normalizedHeat = (heatNumber.trim().toUpperCase() == 'R/F' || heatNumber.trim().toUpperCase() == 'RF')
+        ? 'R/F'
+        : heatNumber.trim();
     final finalHeatNumber =
-        (readingType == 'day' || readingType == 'standard') ? '' : heatNumber.trim();
+        (readingType == 'day' || readingType == 'standard') ? '' : normalizedHeat;
     if (readingType == 'heat' && finalHeatNumber.isEmpty) {
       return (null, const ValidationFailure('Heat Number is required for Heat readings.'));
     }
@@ -68,6 +71,64 @@ class AddReadingUseCase {
       }
 
       final targetDate = readingDate ?? AppDateUtils.todayLocalMidnightUtcMs();
+
+      // ── Zero-Difference / Identical Meter Values Safeguard ──────────────────
+      final prevReading = await readingsRepo.getPreviousReading(
+        deviceId: deviceId,
+        readingType: readingType,
+        readingDateMs: targetDate,
+        heatNumber: finalHeatNumber,
+      );
+
+      if (prevReading != null) {
+        try {
+          final prevVals = (jsonDecode(prevReading.readingValues) as Map<String, dynamic>)
+              .map((k, v) => MapEntry(k.toUpperCase(), (v as num).toDouble()));
+
+          const cumulativeUnits = ['KWH', 'KWHLT', 'KVAH', 'KVARH', 'LTRS'];
+          final presentCumulative = values.keys
+              .where((k) => cumulativeUnits.contains(k.toUpperCase()))
+              .toList();
+
+          if (presentCumulative.isNotEmpty) {
+            bool allIdentical = true;
+            for (final u in presentCumulative) {
+              final curVal = values[u]!;
+              final prevVal = prevVals[u.toUpperCase()];
+              if (prevVal == null || (curVal - prevVal).abs() > 0.0001) {
+                allIdentical = false;
+                break;
+              }
+            }
+
+            if (allIdentical) {
+              return (
+                null,
+                const ValidationFailure(
+                  'This reading has identical meter values to the previous reading (0 difference). Duplicate entry not allowed.',
+                ),
+              );
+            }
+          }
+        } catch (_) {}
+      }
+
+      // ── Business Cycle Heat Uniqueness Check ──────────────────────────────
+      if (readingType == 'heat') {
+        final heatInBizDay = await readingsRepo.existsHeatNumberInBusinessDay(
+          deviceId: deviceId,
+          heatNumber: finalHeatNumber,
+          readingDateMs: targetDate,
+        );
+        if (heatInBizDay) {
+          return (
+            null,
+            ValidationFailure(
+              'A reading for Heat "$finalHeatNumber" already exists in the current business cycle for this device.',
+            ),
+          );
+        }
+      }
 
       final isDuplicate = await readingsRepo.existsDuplicate(
         deviceId: deviceId,

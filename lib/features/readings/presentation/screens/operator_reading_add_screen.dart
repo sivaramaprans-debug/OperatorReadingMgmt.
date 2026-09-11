@@ -68,6 +68,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
   // Map of deviceId -> TextEditingController for batch entry tabs (Pollution, Water)
   final Map<String, TextEditingController> _batchControllers = {};
   bool _isSubmittingBatch = false;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -120,24 +121,32 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
   }
 
   Future<void> _onSubmit(SupabaseDevice device) async {
-    // Validate heat number first if this is a heat reading
-    if (_readingType == 'heat' && device.requiresHeatDay) {
-      final heatText = _heatNumberController.text.trim();
-      if (heatText.isEmpty) {
-        SnackbarHelper.showError(context, 'Please enter a Heat Number.');
-        return;
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+
+    try {
+      // Validate heat number first if this is a heat reading
+      String finalHeat = '';
+      if (_readingType == 'heat' && device.requiresHeatDay) {
+        final heatText = _heatNumberController.text.trim();
+        if (heatText.isEmpty) {
+          SnackbarHelper.showError(context, 'Please enter a Heat Number or select R/F.');
+          return;
+        }
+        final isRf = heatText.toUpperCase() == 'R/F' || heatText.toUpperCase() == 'RF';
+        finalHeat = isRf ? 'R/F' : heatText;
+
+        final useCase = ref.read(validateHeatNumberUseCaseProvider);
+        final result = await useCase.call(
+          deviceId: device.id,
+          heatNumberText: finalHeat,
+        );
+        if (!result.isValid) {
+          if (!mounted) return;
+          SnackbarHelper.showError(context, result.error!);
+          return;
+        }
       }
-      final useCase = ref.read(validateHeatNumberUseCaseProvider);
-      final result = await useCase.call(
-        deviceId: device.id,
-        heatNumberText: heatText,
-      );
-      if (!result.isValid) {
-        if (!mounted) return;
-        SnackbarHelper.showError(context, result.error!);
-        return;
-      }
-    }
 
     // Collect all unit values
     final Map<String, double> values = {};
@@ -198,7 +207,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
         deviceId: device.id,
         readingType: _readingType,
         readingDateMs: AppDateUtils.nowUtcMs(),
-        heatNumber: _heatNumberController.text,
+        heatNumber: _readingType == 'heat' ? finalHeat : '',
       );
 
       if (prevReading != null) {
@@ -274,7 +283,7 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
     await notifier.submitReading(
       deviceId: device.id,
       readingType: _readingType,
-      heatNumber: _heatNumberController.text,
+      heatNumber: _readingType == 'heat' ? finalHeat : '',
       values: values,
       readingDate: readingDateMs,
     );
@@ -287,6 +296,9 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
       context.pop();
     } else if (state.error != null) {
       SnackbarHelper.showError(context, state.error!);
+    }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -590,14 +602,61 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
               ),
               const SizedBox(height: 8),
               if (_readingType == 'heat') ...[
-                TextField(
-                  controller: _heatNumberController,
-                  decoration: const InputDecoration(
-                    labelText: 'Heat Number',
-                    prefixIcon: Icon(Icons.tag_rounded),
-                  ),
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.next,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _heatNumberController,
+                        decoration: InputDecoration(
+                          labelText: 'Heat Number',
+                          hintText: 'e.g. 7 or R/F',
+                          prefixIcon: const Icon(Icons.tag_rounded),
+                          suffixIcon: _heatNumberController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear_rounded, size: 18),
+                                  onPressed: () => _heatNumberController.clear(),
+                                )
+                              : null,
+                        ),
+                        textCapitalization: TextCapitalization.characters,
+                        keyboardType: TextInputType.text,
+                        textInputAction: TextInputAction.next,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Builder(
+                        builder: (context) {
+                          final isRf = _heatNumberController.text.trim().toUpperCase() == 'R/F' ||
+                              _heatNumberController.text.trim().toUpperCase() == 'RF';
+                          return FilterChip(
+                            selected: isRf,
+                            label: const Text('R/F (Re-Furnace)', style: TextStyle(fontWeight: FontWeight.bold)),
+                            avatar: Icon(
+                              isRf ? Icons.check_circle_rounded : Icons.autorenew_rounded,
+                              size: 16,
+                              color: isRf ? Colors.white : theme.colorScheme.primary,
+                            ),
+                            selectedColor: theme.colorScheme.primary,
+                            checkmarkColor: Colors.white,
+                            labelStyle: TextStyle(
+                              color: isRf ? Colors.white : theme.colorScheme.onSurface,
+                              fontSize: 12,
+                            ),
+                            onSelected: (selected) {
+                              if (selected) {
+                                _heatNumberController.text = 'R/F';
+                              } else {
+                                _heatNumberController.clear();
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
                 _HeatHintWidget(
                   deviceId: selectedDevice.id,
@@ -729,8 +788,10 @@ class _OperatorReadingAddScreenState extends ConsumerState<OperatorReadingAddScr
 
             AppButton(
               label: 'Submit Reading',
-              isLoading: formState.isLoading,
-              onPressed: currentUnits.isEmpty ? null : () => _onSubmit(selectedDevice),
+              isLoading: formState.isLoading || _isSubmitting,
+              onPressed: currentUnits.isEmpty || _isSubmitting || formState.isLoading
+                  ? null
+                  : () => _onSubmit(selectedDevice),
             ),
           ],
         ),
@@ -1071,15 +1132,21 @@ class _HeatHintWidgetState extends ConsumerState<_HeatHintWidget> {
           }
 
           if (result.isValid) {
+            final isRf = heatText.toUpperCase() == 'R/F' || heatText.toUpperCase() == 'RF';
+            final validMsg = isRf
+                ? 'Re-furnace (R/F) selected ✓ Next regular heat: Heat #${result.expectedNext ?? 1}'
+                : 'Heat #$heatText is valid ✓';
             return Row(
               children: [
                 Icon(Icons.check_circle_outline, size: 14, color: theme.colorScheme.primary),
                 const SizedBox(width: 4),
-                Text(
-                  'Heat #$heatText is valid ✓',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text(
+                    validMsg,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],

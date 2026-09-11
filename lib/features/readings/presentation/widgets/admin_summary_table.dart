@@ -968,8 +968,8 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
     if (_selectedCells.isNotEmpty)
       Positioned(
         bottom: 16,
-        left: 16,
-        right: 16,
+        left: 12,
+        right: 12,
         child: Material(
           elevation: 10,
           borderRadius: BorderRadius.circular(14),
@@ -981,54 +981,67 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white24, width: 1.2),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${_selectedCells.length} cells selected',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${_selectedCells.length} cells selected',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _selectedCells.clear()),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white70,
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      ),
+                      child: const Text('Clear Selection'),
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
                 Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextButton(
-                      onPressed: () => setState(() => _selectedCells.clear()),
-                      style: TextButton.styleFrom(foregroundColor: Colors.white70),
-                      child: const Text('Clear'),
-                    ),
-                    const SizedBox(width: 6),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.grid_on_rounded, size: 14),
-                      label: const Text('Grid'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: Colors.white60),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        visualDensity: VisualDensity.compact,
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.grid_on_rounded, size: 16),
+                        label: const Text('Copy Grid'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white60),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () => _copySelectedAsGrid(chronological: true),
                       ),
-                      onPressed: () => _copySelectedAsGrid(chronological: true),
                     ),
                     const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.copy_rounded, size: 16),
-                      label: Text(
-                        'Copy for Excel (${_selectedCells.length})',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: const Text(
+                          'Copy for Excel',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 3,
+                        ),
+                        onPressed: () => _copySelectedAsColumn(chronological: true),
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                        elevation: 3,
-                      ),
-                      onPressed: () => _copySelectedAsColumn(chronological: true),
                     ),
                   ],
                 ),

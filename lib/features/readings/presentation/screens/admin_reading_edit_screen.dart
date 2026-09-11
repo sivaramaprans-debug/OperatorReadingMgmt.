@@ -43,6 +43,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
   List<String> _heatUnits = [];
   List<String> _dayUnits = [];
   bool _loading = true;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -79,41 +80,42 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
   }
 
   Future<void> _fetchDeviceDetails(String deviceId) async {
-    if (!mounted) return;
-    setState(() => _loading = true);
-    final device = await ref.read(supabaseDevicesRepoProvider).findById(deviceId);
-    if (mounted) {
-      setState(() {
-        _device = device;
-        _loading = false;
-        if (device != null) {
+    try {
+      final device = await ref.read(supabaseDevicesRepoProvider).findById(deviceId);
+      if (device != null && mounted) {
+        setState(() {
+          _device = device;
           _heatUnits = device.matrix.isEmpty
               ? []
               : device.matrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
           _dayUnits = device.dayMatrix.isEmpty
               ? []
               : device.dayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-              
-          // Parse existing values if this is an edit
-          Map<String, double> existingValues = {};
-          if (widget.reading != null && widget.reading!.deviceId == deviceId) {
-            try {
-              final decoded = jsonDecode(widget.reading!.readingValues) as Map<String, dynamic>;
-              existingValues = decoded.map((k, v) => MapEntry(k, (v as num).toDouble()));
-            } catch (_) {}
-          }
-
-          _unitControllers.clear();
+          
           final allUnits = {..._heatUnits, ..._dayUnits};
-          for (final unit in allUnits) {
-            final controller = TextEditingController(
-              text: existingValues.containsKey(unit) ? existingValues[unit]!.toStringAsFixed(2) : '',
-            );
+          for (final u in allUnits) {
+            final existingText = widget.reading != null
+                ? (_parseValues(widget.reading!.readingValues)[u]?.toString() ?? '')
+                : '';
+            final controller = TextEditingController(text: existingText);
             controller.addListener(_onUnitValuesChanged);
-            _unitControllers[unit] = controller;
+            _unitControllers[u] = controller;
           }
-        }
-      });
+          
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Map<String, double> _parseValues(String json) {
+    try {
+      final decoded = jsonDecode(json) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, (v as num).toDouble()));
+    } catch (_) {
+      return {};
     }
   }
 
@@ -141,76 +143,87 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
   }
 
   Future<void> _onSubmit() async {
-    if (_selectedDeviceId == null || _selectedOperatorId == null) {
-      SnackbarHelper.showError(context, 'Please select both a Device and an Operator.');
-      return;
-    }
-    
-    // Use heat units only when device requires heat/day AND current type is heat.
-    // Otherwise always use day units.
-    final currentUnits = _readingType == 'heat' && (_device?.requiresHeatDay ?? false)
-        ? _heatUnits
-        : _dayUnits;
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
 
-    final Map<String, double> values = {};
-    for (final unit in currentUnits) {
-      final controller = _unitControllers[unit];
-      if (controller == null) continue;
-      if (controller.text.trim().isEmpty) continue; // Allow missing values for admin if needed, or enforce them? We'll enforce them.
-      
-      final parsed = double.tryParse(controller.text.trim());
-      if (parsed == null) {
-        SnackbarHelper.showError(context, 'Please enter a valid number for $unit.');
+    try {
+      if (_selectedDeviceId == null || _selectedOperatorId == null) {
+        SnackbarHelper.showError(context, 'Please select both a Device and an Operator.');
         return;
       }
-      values[unit] = parsed;
-    }
-    
-    if (values.isEmpty) {
-      SnackbarHelper.showError(context, 'Please enter at least one reading value.');
-      return;
-    }
+      
+      // Use heat units only when device requires heat/day AND current type is heat.
+      // Otherwise always use day units.
+      final currentUnits = _readingType == 'heat' && (_device?.requiresHeatDay ?? false)
+          ? _heatUnits
+          : _dayUnits;
 
-    final selectedDateTime = DateTime(
-      _selectedDate.year,
-      _selectedDate.month,
-      _selectedDate.day,
-      _selectedTime.hour,
-      _selectedTime.minute,
-    );
-    final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
-    final notifier = ref.read(adminReadingFormNotifierProvider.notifier);
-    
-    if (widget.readingId != null) {
-      await notifier.editReading(
-        readingId: widget.readingId!,
-        readingDate: readingDateMs,
-        readingType: _readingType,
-        heatNumber: _heatNumberController.text,
-        values: values,
+      final Map<String, double> values = {};
+      for (final unit in currentUnits) {
+        final controller = _unitControllers[unit];
+        if (controller == null) continue;
+        if (controller.text.trim().isEmpty) continue; // Allow missing values for admin if needed, or enforce them? We'll enforce them.
+        
+        final parsed = double.tryParse(controller.text.trim());
+        if (parsed == null) {
+          SnackbarHelper.showError(context, 'Please enter a valid number for $unit.');
+          return;
+        }
+        values[unit] = parsed;
+      }
+      
+      if (values.isEmpty) {
+        SnackbarHelper.showError(context, 'Please enter at least one reading value.');
+        return;
+      }
+
+      final selectedDateTime = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+        _selectedTime.hour,
+        _selectedTime.minute,
       );
-    } else {
-      await notifier.submitReading(
-        operatorId: _selectedOperatorId!,
-        deviceId: _selectedDeviceId!,
-        readingDate: readingDateMs,
-        readingType: _readingType,
-        heatNumber: _heatNumberController.text,
-        values: values,
-      );
-    }
+      final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
+      final notifier = ref.read(adminReadingFormNotifierProvider.notifier);
 
-    if (!mounted) return;
+      final clean = _heatNumberController.text.trim().toUpperCase();
+      final normalizedHeat = (clean == 'R/F' || clean == 'RF') ? 'R/F' : _heatNumberController.text.trim();
+      final finalHeat = _readingType == 'heat' ? normalizedHeat : '';
+      
+      if (widget.readingId != null) {
+        await notifier.editReading(
+          readingId: widget.readingId!,
+          readingDate: readingDateMs,
+          readingType: _readingType,
+          heatNumber: finalHeat,
+          values: values,
+        );
+      } else {
+        await notifier.submitReading(
+          operatorId: _selectedOperatorId!,
+          deviceId: _selectedDeviceId!,
+          readingDate: readingDateMs,
+          readingType: _readingType,
+          heatNumber: finalHeat,
+          values: values,
+        );
+      }
 
-    final state = ref.read(adminReadingFormNotifierProvider);
-    if (state.success) {
-      SnackbarHelper.showSuccess(context, 'Reading saved successfully');
-      ref.invalidate(adminReadingsProvider);
-      ref.invalidate(adminDaySummaryReadingsProvider);
-      ref.invalidate(adminHeatSummaryReadingsProvider);
-      context.pop();
-    } else if (state.error != null) {
-      SnackbarHelper.showError(context, state.error!);
+      if (!mounted) return;
+
+      final state = ref.read(adminReadingFormNotifierProvider);
+      if (state.success) {
+        SnackbarHelper.showSuccess(context, 'Reading saved successfully');
+        ref.invalidate(adminReadingsProvider);
+        ref.invalidate(adminDaySummaryReadingsProvider);
+        ref.invalidate(adminHeatSummaryReadingsProvider);
+        context.pop();
+      } else if (state.error != null) {
+        SnackbarHelper.showError(context, state.error!);
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -375,13 +388,61 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
                         ),
                         if (_readingType == 'heat') ...[
                           const SizedBox(height: 8),
-                          TextField(
-                            controller: _heatNumberController,
-                            decoration: const InputDecoration(
-                              labelText: 'Heat Number',
-                              prefixIcon: Icon(Icons.tag_rounded),
-                            ),
-                            textInputAction: TextInputAction.next,
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _heatNumberController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Heat Number',
+                                    hintText: 'e.g. 7 or R/F',
+                                    prefixIcon: const Icon(Icons.tag_rounded),
+                                    suffixIcon: _heatNumberController.text.isNotEmpty
+                                        ? IconButton(
+                                            icon: const Icon(Icons.clear_rounded, size: 18),
+                                            onPressed: () => _heatNumberController.clear(),
+                                          )
+                                        : null,
+                                  ),
+                                  textCapitalization: TextCapitalization.characters,
+                                  keyboardType: TextInputType.text,
+                                  textInputAction: TextInputAction.next,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Builder(
+                                  builder: (context) {
+                                    final isRf = _heatNumberController.text.trim().toUpperCase() == 'R/F' ||
+                                        _heatNumberController.text.trim().toUpperCase() == 'RF';
+                                    return FilterChip(
+                                      selected: isRf,
+                                      label: const Text('R/F (Re-Furnace)', style: TextStyle(fontWeight: FontWeight.bold)),
+                                      avatar: Icon(
+                                        isRf ? Icons.check_circle_rounded : Icons.autorenew_rounded,
+                                        size: 16,
+                                        color: isRf ? Colors.white : Theme.of(context).colorScheme.primary,
+                                      ),
+                                      selectedColor: Theme.of(context).colorScheme.primary,
+                                      checkmarkColor: Colors.white,
+                                      labelStyle: TextStyle(
+                                        color: isRf ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                                        fontSize: 12,
+                                      ),
+                                      onSelected: (selected) {
+                                        if (selected) {
+                                          _heatNumberController.text = 'R/F';
+                                        } else {
+                                          _heatNumberController.clear();
+                                        }
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                         const SizedBox(height: 16),
@@ -461,8 +522,8 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
 
                     AppButton(
                       label: 'Save Changes',
-                      isLoading: formState.isLoading,
-                      onPressed: _onSubmit,
+                      isLoading: formState.isLoading || _isSubmitting,
+                      onPressed: _isSubmitting || formState.isLoading ? null : _onSubmit,
                     ),
                   ],
                 ),

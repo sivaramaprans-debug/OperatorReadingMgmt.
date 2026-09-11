@@ -277,13 +277,21 @@ class SupabaseReadingsRepository {
         .toList();
     if (readings.isEmpty) return null;
 
+    final isRefurnace = heatNumber.trim().toUpperCase() == 'R/F' || heatNumber.trim().toUpperCase() == 'RF';
+    if (isRefurnace) {
+      // For R/F, predecessor is simply the closest preceding heat reading in time (e.g. Heat 6)
+      return readings.first;
+    }
+
     final currentHeatInt = int.tryParse(heatNumber.trim());
 
-    // 1. If we have a specific heat number > 1 (e.g. 8 or 9):
-    // Find the closest preceding reading with heat number < currentHeatInt
+    // 1. If we have a specific heat number > 1 (e.g. 7 or 8):
+    // Find the closest preceding reading with heat number < currentHeatInt or an intermediate R/F
     if (currentHeatInt != null && currentHeatInt > 1) {
       final validPredecessors = readings.where((r) {
-        final rh = int.tryParse(r.heatNumber.trim()) ?? 0;
+        final rClean = r.heatNumber.trim().toUpperCase();
+        if (rClean == 'R/F' || rClean == 'RF') return true;
+        final rh = int.tryParse(rClean) ?? 0;
         return rh < currentHeatInt;
       }).toList();
 
@@ -318,6 +326,68 @@ class SupabaseReadingsRepository {
         .maybeSingle();
     if (data == null) return null;
     return SupabaseReading.fromMap(data);
+  }
+
+  /// Returns the most recently submitted numbered heat reading for a device
+  /// (skipping non-numbered entries like 'R/F').
+  Future<SupabaseReading?> getLastNumberedHeatReading({required String deviceId}) async {
+    final data = await supabase
+        .from(_table)
+        .select()
+        .eq('device_id', deviceId)
+        .eq('reading_type', 'heat')
+        .order('created_at', ascending: false)
+        .limit(20);
+    if (data == null) return null;
+    final list = (data as List).map((m) => SupabaseReading.fromMap(m as Map<String, dynamic>)).toList();
+    for (final r in list) {
+      final h = r.heatNumber.trim().toUpperCase();
+      if (h != 'R/F' && h != 'RF' && int.tryParse(h) != null) {
+        return r;
+      }
+    }
+    return null;
+  }
+
+  /// Checks if a heat number already exists for a device within the same 24-hour business day.
+  /// Ignores 'R/F' entries since re-furnacing can legitimately occur multiple times in a cycle.
+  Future<bool> existsHeatNumberInBusinessDay({
+    required String deviceId,
+    required String heatNumber,
+    required int readingDateMs,
+    String? excludeId,
+  }) async {
+    final cleanHeat = heatNumber.trim();
+    if (cleanHeat.toUpperCase() == 'R/F' || cleanHeat.toUpperCase() == 'RF') {
+      return false;
+    }
+    final dt = DateTime.fromMillisecondsSinceEpoch(readingDateMs, isUtc: true).toLocal();
+    final DateTime bizStart;
+    final DateTime bizEnd;
+    if (dt.hour < 8) {
+      bizStart = DateTime(dt.year, dt.month, dt.day - 1, 8, 0, 0);
+      bizEnd = DateTime(dt.year, dt.month, dt.day, 8, 0, 0);
+    } else {
+      bizStart = DateTime(dt.year, dt.month, dt.day, 8, 0, 0);
+      bizEnd = DateTime(dt.year, dt.month, dt.day + 1, 8, 0, 0);
+    }
+    final startMs = bizStart.toUtc().millisecondsSinceEpoch;
+    final endMs = bizEnd.toUtc().millisecondsSinceEpoch;
+
+    var query = supabase
+        .from(_table)
+        .select('id')
+        .eq('device_id', deviceId)
+        .eq('reading_type', 'heat')
+        .eq('heat_number', cleanHeat)
+        .gte('reading_date', startMs)
+        .lt('reading_date', endMs);
+
+    if (excludeId != null && excludeId.isNotEmpty) {
+      query = query.neq('id', excludeId);
+    }
+    final data = await query.limit(1);
+    return (data as List).isNotEmpty;
   }
 
   /// Returns the most recent heat reading where heat_number == '1' for a device,

@@ -34,9 +34,10 @@ class ValidateHeatNumberUseCase {
     required String deviceId,
     required String heatNumberText,
   }) async {
-    // Fetch the most recent heat reading for this device (regardless of date)
+    // Fetch the most recent numbered heat reading (ignoring R/F) to determine expectedNext
+    final lastNumberedReading = await _repo.getLastNumberedHeatReading(deviceId: deviceId);
     final lastReading = await _repo.getLastHeatReading(deviceId: deviceId);
-    final prevHeat = lastReading != null ? int.tryParse(lastReading.heatNumber.trim()) : null;
+    final prevHeat = lastNumberedReading != null ? int.tryParse(lastNumberedReading.heatNumber.trim()) : null;
     final expectedNext = (prevHeat != null) ? (prevHeat + 1) : 1;
 
     final trimmed = heatNumberText.trim();
@@ -44,10 +45,15 @@ class ValidateHeatNumberUseCase {
       return HeatValidationResult._(error: null, expectedNext: expectedNext);
     }
 
+    // ── Re-Furnace (R/F) check ────────────────────────────────────────────────
+    if (trimmed.toUpperCase() == 'R/F' || trimmed.toUpperCase() == 'RF') {
+      return HeatValidationResult._(error: null, expectedNext: expectedNext);
+    }
+
     final proposed = int.tryParse(trimmed);
     if (proposed == null || proposed < 1) {
       return HeatValidationResult.invalid(
-        'Heat number must be a positive integer.',
+        'Heat number must be a positive integer or "R/F" for Re-Furnace.',
         expectedNext: expectedNext,
       );
     }
@@ -112,15 +118,15 @@ class ValidateHeatNumberUseCase {
     // ── Case 3: anything else (skipped, repeated, out-of-order) ───────────────
     if (proposed == prevHeat) {
       return HeatValidationResult.invalid(
-        'Heat #$proposed was already the last reading. '
-        'Next heat must be $expectedNext, or start a new cycle with Heat #1.',
+        'Heat #$proposed was already the last recorded heat. '
+        'Next heat must be Heat #$expectedNext, or enter "R/F" for Re-furnace.',
         expectedNext: expectedNext,
       );
     }
 
     return HeatValidationResult.invalid(
       'Invalid heat number. After Heat #$prevHeat, '
-      'you must enter Heat #$expectedNext, or start a new cycle with Heat #1.',
+      'you must enter Heat #$expectedNext, or "R/F" for Re-furnace, or start a new cycle with Heat #1.',
       expectedNext: expectedNext,
     );
   }

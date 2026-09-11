@@ -580,10 +580,11 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
         if (widget.enableExcelCopyTools && _selectedCells.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: AppColors.primary,
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white24, width: 1.2),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.2),
@@ -592,37 +593,66 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                 ),
               ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${_selectedCells.length} cells selected',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    Row(
+                      children: [
+                        const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${_selectedCells.length} cells selected',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _selectedCells.clear()),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white70,
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      ),
+                      child: const Text('Clear Selection'),
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
                 Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextButton(
-                      onPressed: () => setState(() => _selectedCells.clear()),
-                      style: TextButton.styleFrom(foregroundColor: Colors.white70),
-                      child: const Text('Clear'),
-                    ),
-                    const SizedBox(width: 6),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.copy_rounded, size: 16),
-                      label: Text('Copy for Excel (${_selectedCells.length})', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.grid_on_rounded, size: 16),
+                        label: const Text('Copy Grid'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white60),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () => _copySelectedCellsAsGrid(chronological: true),
                       ),
-                      onPressed: () => _copySelectedCellsAsColumn(chronological: true),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        label: const Text(
+                          'Copy for Excel',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          elevation: 3,
+                        ),
+                        onPressed: () => _copySelectedCellsAsColumn(chronological: true),
+                      ),
                     ),
                   ],
                 ),

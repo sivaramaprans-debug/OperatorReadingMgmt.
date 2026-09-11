@@ -33,10 +33,16 @@ class _AdminReadingsListScreenState
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(_handleTabChange);
+  }
+
+  void _handleTabChange() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChange);
     _tabController.dispose();
     super.dispose();
   }
@@ -147,11 +153,13 @@ class _AdminReadingsListScreenState
           _SummaryTab(readingType: 'heat'),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push(RoutePaths.adminReadingAdd),
-        icon: const Icon(Icons.add_chart_rounded),
-        label: const Text('Add Reading'),
-      ),
+      floatingActionButton: _tabController.index == 0
+          ? FloatingActionButton.extended(
+              onPressed: () => context.push(RoutePaths.adminReadingAdd),
+              icon: const Icon(Icons.add_chart_rounded),
+              label: const Text('Add Reading'),
+            )
+          : null,
     );
   }
 }

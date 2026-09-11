@@ -203,11 +203,15 @@ class _OperatorReadingEditScreenState extends ConsumerState<OperatorReadingEditS
       values[unit] = parsed;
     }
 
+    final heatText = _heatNumberController.text.trim();
+    final isRf = heatText.toUpperCase() == 'R/F' || heatText.toUpperCase() == 'RF';
+    final normalizedHeat = isRf ? 'R/F' : heatText;
+
     final notifier = ref.read(readingFormNotifierProvider.notifier);
     await notifier.editReading(
       readingId: widget.readingId,
       readingType: _readingType,
-      heatNumber: _heatNumberController.text,
+      heatNumber: _readingType == 'heat' ? normalizedHeat : '',
       values: values,
     );
 
@@ -345,13 +349,61 @@ class _OperatorReadingEditScreenState extends ConsumerState<OperatorReadingEditS
                 ),
                 if (_readingType == 'heat') ...[
                   const SizedBox(height: 8),
-                  TextField(
-                    controller: _heatNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'Heat Number',
-                      prefixIcon: Icon(Icons.tag_rounded),
-                    ),
-                    textInputAction: TextInputAction.next,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _heatNumberController,
+                          decoration: InputDecoration(
+                            labelText: 'Heat Number',
+                            hintText: 'e.g. 7 or R/F',
+                            prefixIcon: const Icon(Icons.tag_rounded),
+                            suffixIcon: _heatNumberController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear_rounded, size: 18),
+                                    onPressed: () => _heatNumberController.clear(),
+                                  )
+                                : null,
+                          ),
+                          textCapitalization: TextCapitalization.characters,
+                          keyboardType: TextInputType.text,
+                          textInputAction: TextInputAction.next,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Builder(
+                          builder: (context) {
+                            final isRf = _heatNumberController.text.trim().toUpperCase() == 'R/F' ||
+                                _heatNumberController.text.trim().toUpperCase() == 'RF';
+                            return FilterChip(
+                              selected: isRf,
+                              label: const Text('R/F (Re-Furnace)', style: TextStyle(fontWeight: FontWeight.bold)),
+                              avatar: Icon(
+                                isRf ? Icons.check_circle_rounded : Icons.autorenew_rounded,
+                                size: 16,
+                                color: isRf ? Colors.white : Theme.of(context).colorScheme.primary,
+                              ),
+                              selectedColor: Theme.of(context).colorScheme.primary,
+                              checkmarkColor: Colors.white,
+                              labelStyle: TextStyle(
+                                color: isRf ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                                fontSize: 12,
+                              ),
+                              onSelected: (selected) {
+                                if (selected) {
+                                  _heatNumberController.text = 'R/F';
+                                } else {
+                                  _heatNumberController.clear();
+                                }
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
                 const SizedBox(height: 16),
