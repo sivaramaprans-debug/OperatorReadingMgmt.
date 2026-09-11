@@ -113,18 +113,16 @@ class AddReadingUseCase {
         } catch (_) {}
       }
 
-      // ── Business Cycle Heat Uniqueness Check ──────────────────────────────
-      if (readingType == 'heat') {
-        final heatInBizDay = await readingsRepo.existsHeatNumberInBusinessDay(
-          deviceId: deviceId,
-          heatNumber: finalHeatNumber,
-          readingDateMs: targetDate,
-        );
-        if (heatInBizDay) {
+      // ── Immediate Consecutive Duplicate Heat Check ────────────────────────
+      // Same heat number cannot be entered one after another. Subsequent cycles
+      // in the 24h day (e.g. 1-6 and later 1-6) are fully permitted.
+      if (readingType == 'heat' && finalHeatNumber != 'R/F') {
+        final lastNumbered = await readingsRepo.getLastNumberedHeatReading(deviceId: deviceId);
+        if (lastNumbered != null && lastNumbered.heatNumber.trim() == finalHeatNumber) {
           return (
             null,
             ValidationFailure(
-              'A reading for Heat "$finalHeatNumber" already exists in the current business cycle for this device.',
+              'Heat #$finalHeatNumber was already the last recorded heat. Duplicate consecutive heat reading not allowed.',
             ),
           );
         }

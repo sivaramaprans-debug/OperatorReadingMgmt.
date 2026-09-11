@@ -1,4 +1,3 @@
-import '../../../../core/utils/app_date_utils.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 
 /// Result of heat number validation.
@@ -21,14 +20,12 @@ class HeatValidationResult {
 
 /// Validates a proposed heat number against all business rules:
 ///
-/// R1 + R2 + R5: next = prev + 1 OR next = 1 (combined into one check)
-/// R3: New cycle always starts from 1
-/// R4: Heat #1 on the same calendar day requires ≥10 hours since the last Heat #1
+/// R1 + R2: next = prev + 1 OR R/F
+/// R3: New cycle starts from Heat 1 (when previous heat is not 1)
+/// R4: Same heat number cannot be entered consecutively one after another
 class ValidateHeatNumberUseCase {
   const ValidateHeatNumberUseCase(this._repo);
   final SupabaseReadingsRepository _repo;
-
-  static const int _minCycleGapHours = 10;
 
   Future<HeatValidationResult> call({
     required String deviceId,
@@ -81,38 +78,26 @@ class ValidateHeatNumberUseCase {
       return HeatValidationResult.valid;
     }
 
-    // ── Case 2: new cycle (proposed == 1) ─────────────────────────────────────
+    // ── Case 2: new cycle / crucible switchover (proposed == 1) ───────────────
     if (proposed == 1) {
-      final todayMidnight = AppDateUtils.todayLocalMidnightUtcMs();
-      final lastHeat1 = await _repo.getLastHeatNumberOneOnDate(
-        deviceId: deviceId,
-        dayMidnightMs: todayMidnight,
-      );
-
-      // No Heat #1 on today — freely allowed
-      if (lastHeat1 == null) return HeatValidationResult.valid;
-
-      // Check 10-hour gap
-      final lastHeat1Time = DateTime.fromMillisecondsSinceEpoch(
-        lastHeat1.createdAt,
-        isUtc: true,
-      );
-      final now = DateTime.now().toUtc();
-      final elapsed = now.difference(lastHeat1Time);
-
-      if (elapsed.inHours >= _minCycleGapHours) {
-        return HeatValidationResult.valid;
+      if (prevHeat == 1) {
+        // Can only happen if Crucible 1 stopped at Heat 1 and switched to Crucible 2.
+        // In plant operation, crucible switchover and heat cycle takes minimum 6 hours.
+        final lastTime = DateTime.fromMillisecondsSinceEpoch(
+          lastNumberedReading!.readingDate,
+          isUtc: true,
+        );
+        final elapsed = DateTime.now().toUtc().difference(lastTime);
+        if (elapsed.inHours < 6) {
+          return HeatValidationResult.invalid(
+            'Heat #1 was already the last recorded heat. '
+            'Immediate duplicate Heat #1 is not allowed.\n'
+            'A new crucible cycle can only be recorded after a minimum 6-hour gap.',
+            expectedNext: expectedNext,
+          );
+        }
       }
-
-      // Too soon — tell the operator when they can start the next cycle
-      final canStartAt = lastHeat1Time.add(const Duration(hours: _minCycleGapHours)).toLocal();
-      final hh = canStartAt.hour.toString().padLeft(2, '0');
-      final mm = canStartAt.minute.toString().padLeft(2, '0');
-      return HeatValidationResult.invalid(
-        'A new heat cycle can only start after 10 hours from the last Heat #1.\n'
-        'Next cycle can start at $hh:$mm today.',
-        expectedNext: expectedNext,
-      );
+      return HeatValidationResult.valid;
     }
 
     // ── Case 3: anything else (skipped, repeated, out-of-order) ───────────────

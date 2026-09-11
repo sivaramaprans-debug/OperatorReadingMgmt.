@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:operator_reading_mgmt/database/repositories/supabase_readings_repository.dart';
 import 'package:operator_reading_mgmt/features/readings/domain/usecases/validate_heat_number_usecase.dart';
 
@@ -6,12 +6,10 @@ class FakeReadingsRepo extends SupabaseReadingsRepository {
   FakeReadingsRepo({
     this.lastHeatReading,
     this.lastNumberedHeatReading,
-    this.lastHeat1OnDate,
   });
 
   SupabaseReading? lastHeatReading;
   SupabaseReading? lastNumberedHeatReading;
-  SupabaseReading? lastHeat1OnDate;
 
   @override
   Future<SupabaseReading?> getLastHeatReading({required String deviceId}) async {
@@ -21,14 +19,6 @@ class FakeReadingsRepo extends SupabaseReadingsRepository {
   @override
   Future<SupabaseReading?> getLastNumberedHeatReading({required String deviceId}) async {
     return lastNumberedHeatReading;
-  }
-
-  @override
-  Future<SupabaseReading?> getLastHeatNumberOneOnDate({
-    required String deviceId,
-    required int dayMidnightMs,
-  }) async {
-    return lastHeat1OnDate;
   }
 }
 
@@ -81,6 +71,47 @@ void main() {
       final res8 = await usecase(deviceId: 'dev-1', heatNumberText: '8');
       expect(res8.isValid, isFalse);
       expect(res8.error, contains('must enter Heat #7'));
+    });
+
+    test('allows starting new cycle with Heat 1 after Heat 6', () async {
+      final heat6 = _createReading(id: 'r6', heatNumber: '6', createdAt: 1000000);
+      final repo = FakeReadingsRepo(
+        lastHeatReading: heat6,
+        lastNumberedHeatReading: heat6,
+      );
+      final usecase = ValidateHeatNumberUseCase(repo);
+
+      final res1 = await usecase(deviceId: 'dev-1', heatNumberText: '1');
+      expect(res1.isValid, isTrue);
+    });
+
+    test('rejects entering Heat 1 immediately (< 6 hrs) after Heat 1', () async {
+      // Heat 1 recorded 1 hour ago
+      final oneHourAgo = DateTime.now().toUtc().subtract(const Duration(hours: 1)).millisecondsSinceEpoch;
+      final heat1 = _createReading(id: 'r1', heatNumber: '1', createdAt: oneHourAgo);
+      final repo = FakeReadingsRepo(
+        lastHeatReading: heat1,
+        lastNumberedHeatReading: heat1,
+      );
+      final usecase = ValidateHeatNumberUseCase(repo);
+
+      final res1 = await usecase(deviceId: 'dev-1', heatNumberText: '1');
+      expect(res1.isValid, isFalse);
+      expect(res1.error, contains('minimum 6-hour gap'));
+    });
+
+    test('allows entering Heat 1 after Heat 1 when >= 6 hrs have passed (crucible switchover)', () async {
+      // Heat 1 recorded 7 hours ago
+      final sevenHoursAgo = DateTime.now().toUtc().subtract(const Duration(hours: 7)).millisecondsSinceEpoch;
+      final heat1 = _createReading(id: 'r1', heatNumber: '1', createdAt: sevenHoursAgo);
+      final repo = FakeReadingsRepo(
+        lastHeatReading: heat1,
+        lastNumberedHeatReading: heat1,
+      );
+      final usecase = ValidateHeatNumberUseCase(repo);
+
+      final res1 = await usecase(deviceId: 'dev-1', heatNumberText: '1');
+      expect(res1.isValid, isTrue);
     });
 
     test('accepts R/F and rf at any time in heat sequence', () async {

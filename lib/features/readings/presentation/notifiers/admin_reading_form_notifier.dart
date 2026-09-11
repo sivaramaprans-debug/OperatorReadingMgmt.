@@ -74,17 +74,13 @@ class AdminReadingFormNotifier extends AutoDisposeNotifier<AdminReadingFormState
         } catch (_) {}
       }
 
-      // Check if heat number already exists in current business cycle
-      if (readingType == 'heat') {
-        final heatInBizDay = await repo.existsHeatNumberInBusinessDay(
-          deviceId: deviceId,
-          heatNumber: finalHeatNumber,
-          readingDateMs: readingDate,
-        );
-        if (heatInBizDay) {
+      // Immediate consecutive duplicate heat check (same heat cannot be entered back-to-back)
+      if (readingType == 'heat' && finalHeatNumber != 'R/F') {
+        final lastNumbered = await repo.getLastNumberedHeatReading(deviceId: deviceId);
+        if (lastNumbered != null && lastNumbered.heatNumber.trim() == finalHeatNumber) {
           state = state.copyWith(
             isLoading: false,
-            error: 'A reading for Heat "$finalHeatNumber" already exists in the current business cycle.',
+            error: 'Heat #$finalHeatNumber was already the last recorded heat. Duplicate consecutive heat reading not allowed.',
           );
           return;
         }

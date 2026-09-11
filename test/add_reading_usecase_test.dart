@@ -15,12 +15,12 @@ class FakeDevicesRepo extends SupabaseDevicesRepository {
 class FakeAddReadingsRepo extends SupabaseReadingsRepository {
   FakeAddReadingsRepo({
     this.prevReading,
-    this.heatInBizDay = false,
+    this.lastNumberedHeatReading,
     this.isDuplicate = false,
   });
 
   SupabaseReading? prevReading;
-  bool heatInBizDay;
+  SupabaseReading? lastNumberedHeatReading;
   bool isDuplicate;
   int insertCallCount = 0;
   Map<String, dynamic>? lastInserted;
@@ -37,13 +37,8 @@ class FakeAddReadingsRepo extends SupabaseReadingsRepository {
   }
 
   @override
-  Future<bool> existsHeatNumberInBusinessDay({
-    required String deviceId,
-    required String heatNumber,
-    required int readingDateMs,
-    String? excludeId,
-  }) async {
-    return heatInBizDay;
+  Future<SupabaseReading?> getLastNumberedHeatReading({required String deviceId}) async {
+    return lastNumberedHeatReading;
   }
 
   @override
@@ -127,23 +122,72 @@ void main() {
       expect(readingsRepo.insertCallCount, 0);
     });
 
-    test('rejects heat reading if heat number already exists in current business cycle', () async {
+    test('rejects heat reading if heat number is identical to immediate previous heat (consecutive duplicate)', () async {
+      final heat6 = SupabaseReading(
+        id: 'heat-6',
+        operatorId: 'op-1',
+        deviceId: 'sms-furnace-1',
+        readingDate: 1000000,
+        readingType: 'heat',
+        heatNumber: '6',
+        readingValues: jsonEncode({'KWH': 250417000.0, 'KVAH': 250418000.0}),
+        createdAt: 1000000,
+      );
+
       final devicesRepo = FakeDevicesRepo(_createDevice());
-      final readingsRepo = FakeAddReadingsRepo(heatInBizDay: true);
+      final readingsRepo = FakeAddReadingsRepo(
+        prevReading: heat6,
+        lastNumberedHeatReading: heat6,
+      );
       final usecase = AddReadingUseCase(devicesRepo: devicesRepo, readingsRepo: readingsRepo);
 
+      // Submitting Heat 6 immediately after Heat 6
       final (id, failure) = await usecase(
         operatorId: 'op-1',
         deviceId: 'sms-furnace-1',
         readingType: 'heat',
-        heatNumber: '7',
+        heatNumber: '6',
         values: {'KWH': 250420000.0, 'KVAH': 250422000.0},
       );
 
       expect(id, isNull);
       expect(failure, isNotNull);
-      expect(failure!.message, contains('already exists in the current business cycle'));
+      expect(failure!.message, contains('already the last recorded heat'));
       expect(readingsRepo.insertCallCount, 0);
+    });
+
+    test('accepts heat reading with same heat number if from a new cycle (e.g. Heat 6 after Heat 5)', () async {
+      // Previous reading was Heat 5 from cycle 2
+      final heat5 = SupabaseReading(
+        id: 'heat-5-c2',
+        operatorId: 'op-1',
+        deviceId: 'sms-furnace-1',
+        readingDate: 1000000,
+        readingType: 'heat',
+        heatNumber: '5',
+        readingValues: jsonEncode({'KWH': 250417000.0, 'KVAH': 250418000.0}),
+        createdAt: 1000000,
+      );
+
+      final devicesRepo = FakeDevicesRepo(_createDevice());
+      final readingsRepo = FakeAddReadingsRepo(
+        prevReading: heat5,
+        lastNumberedHeatReading: heat5,
+      );
+      final usecase = AddReadingUseCase(devicesRepo: devicesRepo, readingsRepo: readingsRepo);
+
+      // Submitting Heat 6 in cycle 2 (even if Heat 6 also existed in morning cycle 1)
+      final (id, failure) = await usecase(
+        operatorId: 'op-1',
+        deviceId: 'sms-furnace-1',
+        readingType: 'heat',
+        heatNumber: '6',
+        values: {'KWH': 250420000.0, 'KVAH': 250422000.0},
+      );
+
+      expect(failure, isNull);
+      expect(id, equals('new-id-123'));
+      expect(readingsRepo.insertCallCount, 1);
     });
 
     test('accepts valid heat reading with advance in meter values and normalizes R/F', () async {
@@ -159,7 +203,10 @@ void main() {
       );
 
       final devicesRepo = FakeDevicesRepo(_createDevice());
-      final readingsRepo = FakeAddReadingsRepo(prevReading: prev);
+      final readingsRepo = FakeAddReadingsRepo(
+        prevReading: prev,
+        lastNumberedHeatReading: prev,
+      );
       final usecase = AddReadingUseCase(devicesRepo: devicesRepo, readingsRepo: readingsRepo);
 
       // Submit R/F reading with meter advance

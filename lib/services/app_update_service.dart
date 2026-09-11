@@ -20,7 +20,7 @@ class AppUpdateInfo {
 }
 
 class AppUpdateService {
-  static const String currentVersion = '1.6.0';
+  static const String currentVersion = '1.6.1';
   static const String _githubApiUrl =
       'https://api.github.com/repos/sivaramaprans-debug/OperatorReadingMgmt./releases/latest';
 
