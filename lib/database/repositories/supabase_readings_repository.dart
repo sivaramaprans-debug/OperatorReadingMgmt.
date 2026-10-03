@@ -277,40 +277,9 @@ class SupabaseReadingsRepository {
         .toList();
     if (readings.isEmpty) return null;
 
-    final isRefurnace = heatNumber.trim().toUpperCase() == 'R/F' || heatNumber.trim().toUpperCase() == 'RF';
-    if (isRefurnace) {
-      // For R/F, predecessor is simply the closest preceding heat reading in time (e.g. Heat 6)
-      return readings.first;
-    }
-
-    final currentHeatInt = int.tryParse(heatNumber.trim());
-
-    // 1. If we have a specific heat number > 1 (e.g. 7 or 8):
-    // Find the closest preceding reading with heat number < currentHeatInt or an intermediate R/F
-    if (currentHeatInt != null && currentHeatInt > 1) {
-      final validPredecessors = readings.where((r) {
-        final rClean = r.heatNumber.trim().toUpperCase();
-        if (rClean == 'R/F' || rClean == 'RF') return true;
-        final rh = int.tryParse(rClean) ?? 0;
-        return rh < currentHeatInt;
-      }).toList();
-
-      if (validPredecessors.isNotEmpty) {
-        validPredecessors.sort((a, b) {
-          final dateCmp = b.readingDate.compareTo(a.readingDate);
-          if (dateCmp != 0) return dateCmp;
-          final crtCmp = b.createdAt.compareTo(a.createdAt);
-          if (crtCmp != 0) return crtCmp;
-          final ha = int.tryParse(a.heatNumber.trim()) ?? 0;
-          final hb = int.tryParse(b.heatNumber.trim()) ?? 0;
-          return hb.compareTo(ha);
-        });
-        return validPredecessors.first;
-      }
-    }
-
-    // 2. If heat number is empty, or heat number is 1 (new cycle), or no smaller heat was found:
-    // The previous physical reading is simply the most recently recorded reading before this one.
+    // Both crucibles in an SMS furnace share the exact same physical energy meter.
+    // Therefore, the previous physical meter baseline is always the immediate previous reading
+    // recorded on this device in chronological sequence.
     return readings.first;
   }
 

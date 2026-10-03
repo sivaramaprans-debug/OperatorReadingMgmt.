@@ -153,5 +153,59 @@ void main() {
       expect(res8.isValid, isFalse);
       expect(res8.expectedNext, 7);
     });
+
+    test('marks canSwitchover = true when an out-of-sequence heat number is entered without switchover mode', () async {
+      final heat6 = _createReading(id: 'r6', heatNumber: '6', createdAt: 1000000);
+      final repo = FakeReadingsRepo(
+        lastHeatReading: heat6,
+        lastNumberedHeatReading: heat6,
+      );
+      final usecase = ValidateHeatNumberUseCase(repo);
+
+      final res2 = await usecase(deviceId: 'dev-1', heatNumberText: '2');
+      expect(res2.isValid, isFalse);
+      expect(res2.canSwitchover, isTrue);
+    });
+
+    test('crucible switchover accepts out-of-order sequence (e.g. resuming Heat 2 after Heat 11 or Heat 5 after Heat 1)', () async {
+      final heat11 = _createReading(id: 'r11', heatNumber: '11', createdAt: 1000000);
+      final repo = FakeReadingsRepo(
+        lastHeatReading: heat11,
+        lastNumberedHeatReading: heat11,
+      );
+      final usecase = ValidateHeatNumberUseCase(repo);
+
+      final res2 = await usecase(
+        deviceId: 'dev-1',
+        heatNumberText: '2',
+        isCrucibleSwitchover: true,
+      );
+      expect(res2.isValid, isTrue);
+
+      final res5 = await usecase(
+        deviceId: 'dev-1',
+        heatNumberText: '5',
+        isCrucibleSwitchover: true,
+      );
+      expect(res5.isValid, isTrue);
+    });
+
+    test('crucible switchover still prevents immediate duplicate of last heat number', () async {
+      final heat11 = _createReading(id: 'r11', heatNumber: '11', createdAt: 1000000);
+      final repo = FakeReadingsRepo(
+        lastHeatReading: heat11,
+        lastNumberedHeatReading: heat11,
+      );
+      final usecase = ValidateHeatNumberUseCase(repo);
+
+      final res11 = await usecase(
+        deviceId: 'dev-1',
+        heatNumberText: '11',
+        isCrucibleSwitchover: true,
+      );
+      expect(res11.isValid, isFalse);
+      expect(res11.error, contains('already the last recorded heat'));
+    });
   });
 }
+

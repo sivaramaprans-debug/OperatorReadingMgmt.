@@ -2,7 +2,11 @@ import '../../../../database/repositories/supabase_readings_repository.dart';
 
 /// Result of heat number validation.
 class HeatValidationResult {
-  const HeatValidationResult._({this.error, this.expectedNext});
+  const HeatValidationResult._({
+    this.error,
+    this.expectedNext,
+    this.canSwitchover = false,
+  });
 
   /// Null means the proposed heat number is valid.
   final String? error;
@@ -10,12 +14,23 @@ class HeatValidationResult {
   /// What the system expects the next heat number to be (for UI hint).
   final int? expectedNext;
 
+  /// Whether this validation failure can be resolved via Crucible Switchover.
+  final bool canSwitchover;
+
   bool get isValid => error == null;
 
   static const HeatValidationResult valid = HeatValidationResult._();
 
-  factory HeatValidationResult.invalid(String message, {int? expectedNext}) =>
-      HeatValidationResult._(error: message, expectedNext: expectedNext);
+  factory HeatValidationResult.invalid(
+    String message, {
+    int? expectedNext,
+    bool canSwitchover = false,
+  }) =>
+      HeatValidationResult._(
+        error: message,
+        expectedNext: expectedNext,
+        canSwitchover: canSwitchover,
+      );
 }
 
 /// Validates a proposed heat number against all business rules:
@@ -23,6 +38,7 @@ class HeatValidationResult {
 /// R1 + R2: next = prev + 1 OR R/F
 /// R3: New cycle starts from Heat 1 (when previous heat is not 1)
 /// R4: Same heat number cannot be entered consecutively one after another
+/// R5: Crucible Switchover mode allows entering any heat number (resuming alternate crucible after breakdown)
 class ValidateHeatNumberUseCase {
   const ValidateHeatNumberUseCase(this._repo);
   final SupabaseReadingsRepository _repo;
@@ -30,6 +46,7 @@ class ValidateHeatNumberUseCase {
   Future<HeatValidationResult> call({
     required String deviceId,
     required String heatNumberText,
+    bool isCrucibleSwitchover = false,
   }) async {
     // Fetch the most recent numbered heat reading (ignoring R/F) to determine expectedNext
     final lastNumberedReading = await _repo.getLastNumberedHeatReading(deviceId: deviceId);
@@ -64,12 +81,28 @@ class ValidateHeatNumberUseCase {
       );
     }
 
+    // ── Crucible Switchover Mode (Breakdown / Maintenance Transition) ─────────
+    if (isCrucibleSwitchover) {
+      // In switchover mode, operator can enter any heat number to start or resume
+      // the alternate crucible (e.g. 1 to start standby, or 2, 5, 6 to resume).
+      // Only protect against immediate consecutive duplicate of the exact previous reading.
+      if (lastReading.heatNumber.trim() == proposed.toString()) {
+        return HeatValidationResult.invalid(
+          'Heat #$proposed was already the last recorded heat. '
+          'Consecutive duplicate heat numbers are not allowed.',
+          expectedNext: expectedNext,
+        );
+      }
+      return HeatValidationResult.valid;
+    }
+
     if (prevHeat == null) {
       // Corrupted previous data — only allow heat 1 as a safe fallback
       if (proposed == 1) return HeatValidationResult.valid;
       return HeatValidationResult.invalid(
-        'Previous heat number is invalid. Please start a new cycle with Heat #1.',
+        'Previous heat number is invalid. Please start a new cycle with Heat #1, or enable Crucible Switchover.',
         expectedNext: 1,
+        canSwitchover: true,
       );
     }
 
@@ -100,7 +133,7 @@ class ValidateHeatNumberUseCase {
       return HeatValidationResult.valid;
     }
 
-    // ── Case 3: anything else (skipped, repeated, out-of-order) ───────────────
+    // ── Case 3: duplicate of immediate previous heat ──────────────────────────
     if (proposed == prevHeat) {
       return HeatValidationResult.invalid(
         'Heat #$proposed was already the last recorded heat. '
@@ -109,10 +142,12 @@ class ValidateHeatNumberUseCase {
       );
     }
 
+    // ── Case 4: out-of-order sequence (eligible for Crucible Switchover) ──────
     return HeatValidationResult.invalid(
-      'Invalid heat number. After Heat #$prevHeat, '
-      'you must enter Heat #$expectedNext, or "R/F" for Re-furnace, or start a new cycle with Heat #1.',
+      'Out of sequence. After Heat #$prevHeat, you must enter Heat #$expectedNext, "R/F", or "1".\n'
+      'If switching or resuming crucibles due to breakdown, enable Crucible Switchover.',
       expectedNext: expectedNext,
+      canSwitchover: true,
     );
   }
 }

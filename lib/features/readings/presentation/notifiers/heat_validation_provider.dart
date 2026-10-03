@@ -9,15 +9,13 @@ final validateHeatNumberUseCaseProvider = Provider<ValidateHeatNumberUseCase>((r
 
 /// Family provider that validates a heat number for a given device.
 /// Returns [HeatValidationResult] — check `.isValid` and `.error`.
-///
-/// Usage:
-///   final result = ref.watch(heatValidationProvider((deviceId: id, heatNumber: text)));
-final heatValidationProvider = FutureProvider.family<HeatValidationResult, ({String deviceId, String heatNumber})>(
+final heatValidationProvider = FutureProvider.family<HeatValidationResult, ({String deviceId, String heatNumber, bool isCrucibleSwitchover})>(
   (ref, params) async {
     final useCase = ref.read(validateHeatNumberUseCaseProvider);
     return useCase.call(
       deviceId: params.deviceId,
       heatNumberText: params.heatNumber,
+      isCrucibleSwitchover: params.isCrucibleSwitchover,
     );
   },
 );
