@@ -14,7 +14,9 @@ import '../../../../shared/widgets/snackbar_helper.dart';
 import '../notifiers/admin_readings_notifier.dart';
 import '../notifiers/admin_reading_form_notifier.dart';
 import '../notifiers/previous_reading_provider.dart';
+import '../notifiers/heat_validation_provider.dart';
 import '../widgets/live_power_factor_widget.dart';
+import '../widgets/heat_hint_widget.dart';
 
 class AdminReadingEditScreen extends ConsumerStatefulWidget {
   const AdminReadingEditScreen({
@@ -44,6 +46,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
   List<String> _dayUnits = [];
   bool _loading = true;
   bool _isSubmitting = false;
+  bool _isCrucibleSwitchover = false;
 
   @override
   void initState() {
@@ -85,6 +88,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
       if (device != null && mounted) {
         setState(() {
           _device = device;
+          _isCrucibleSwitchover = false;
           _heatUnits = device.matrix.isEmpty
               ? []
               : device.matrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
@@ -187,9 +191,73 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
       final readingDateMs = selectedDateTime.toUtc().millisecondsSinceEpoch;
       final notifier = ref.read(adminReadingFormNotifierProvider.notifier);
 
-      final clean = _heatNumberController.text.trim().toUpperCase();
-      final normalizedHeat = (clean == 'R/F' || clean == 'RF') ? 'R/F' : _heatNumberController.text.trim();
-      final finalHeat = _readingType == 'heat' ? normalizedHeat : '';
+      String finalHeat = '';
+      if (_readingType == 'heat' && (_device?.requiresHeatDay ?? false)) {
+        final heatText = _heatNumberController.text.trim();
+        if (heatText.isEmpty) {
+          SnackbarHelper.showError(context, 'Please enter a Heat Number or select R/F.');
+          return;
+        }
+        final isRf = heatText.toUpperCase() == 'R/F' || heatText.toUpperCase() == 'RF';
+        finalHeat = isRf ? 'R/F' : heatText;
+
+        if (widget.readingId == null) {
+          final useCase = ref.read(validateHeatNumberUseCaseProvider);
+          var result = await useCase.call(
+            deviceId: _selectedDeviceId!,
+            heatNumberText: finalHeat,
+            isCrucibleSwitchover: _isCrucibleSwitchover,
+          );
+
+          if (!result.isValid && result.canSwitchover && !_isCrucibleSwitchover) {
+            if (!mounted) return;
+            final expected = result.expectedNext ?? 1;
+            final confirm = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                icon: Icon(Icons.swap_horiz_rounded, size: 36, color: Colors.orange.shade700),
+                title: const Text('Crucible Switchover?'),
+                content: Text(
+                  'Next regular heat is Heat #$expected, but you entered Heat #$finalHeat.\n\n'
+                  'Is this a Crucible Switchover or resuming an alternate crucible due to breakdown / maintenance?',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel / Review'),
+                  ),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
+                    icon: const Icon(Icons.check_rounded),
+                    label: Text('Yes, Continue Heat #$finalHeat'),
+                    onPressed: () => Navigator.pop(ctx, true),
+                  ),
+                ],
+              ),
+            );
+
+            if (confirm == true) {
+              setState(() => _isCrucibleSwitchover = true);
+              result = await useCase.call(
+                deviceId: _selectedDeviceId!,
+                heatNumberText: finalHeat,
+                isCrucibleSwitchover: true,
+              );
+            }
+          }
+
+          if (!result.isValid) {
+            if (!mounted) return;
+            SnackbarHelper.showError(context, result.error!);
+            return;
+          }
+        } else {
+          if (!isRf && int.tryParse(finalHeat) == null) {
+            SnackbarHelper.showError(context, 'Heat number must be a positive integer or "R/F" for Re-Furnace.');
+            return;
+          }
+        }
+      }
       
       if (widget.readingId != null) {
         await notifier.editReading(
@@ -351,6 +419,7 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
                         : (val) {
                           setState(() {
                             _selectedDeviceId = val;
+                            _isCrucibleSwitchover = false;
                           });
                           if (val != null) {
                             _fetchDeviceDetails(val);
@@ -413,37 +482,96 @@ class _AdminReadingEditScreenState extends ConsumerState<AdminReadingEditScreen>
                               const SizedBox(width: 8),
                               Padding(
                                 padding: const EdgeInsets.only(top: 4),
-                                child: Builder(
-                                  builder: (context) {
-                                    final isRf = _heatNumberController.text.trim().toUpperCase() == 'R/F' ||
-                                        _heatNumberController.text.trim().toUpperCase() == 'RF';
-                                    return FilterChip(
-                                      selected: isRf,
-                                      label: const Text('R/F (Re-Furnace)', style: TextStyle(fontWeight: FontWeight.bold)),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Builder(
+                                      builder: (context) {
+                                        final isRf = _heatNumberController.text.trim().toUpperCase() == 'R/F' ||
+                                            _heatNumberController.text.trim().toUpperCase() == 'RF';
+                                        return FilterChip(
+                                          selected: isRf,
+                                          label: const Text('R/F (Re-Furnace)', style: TextStyle(fontWeight: FontWeight.bold)),
+                                          avatar: Icon(
+                                            isRf ? Icons.check_circle_rounded : Icons.autorenew_rounded,
+                                            size: 16,
+                                            color: isRf ? Colors.white : Theme.of(context).colorScheme.primary,
+                                          ),
+                                          selectedColor: Theme.of(context).colorScheme.primary,
+                                          checkmarkColor: Colors.white,
+                                          labelStyle: TextStyle(
+                                            color: isRf ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                                            fontSize: 12,
+                                          ),
+                                          onSelected: (selected) {
+                                            if (selected) {
+                                              _heatNumberController.text = 'R/F';
+                                            } else {
+                                              _heatNumberController.clear();
+                                            }
+                                          },
+                                        );
+                                      },
+                                    ),
+                                    const SizedBox(height: 4),
+                                    FilterChip(
+                                      selected: _isCrucibleSwitchover,
+                                      label: const Text('Crucible Switch', style: TextStyle(fontWeight: FontWeight.bold)),
                                       avatar: Icon(
-                                        isRf ? Icons.check_circle_rounded : Icons.autorenew_rounded,
+                                        _isCrucibleSwitchover ? Icons.check_circle_rounded : Icons.swap_horiz_rounded,
                                         size: 16,
-                                        color: isRf ? Colors.white : Theme.of(context).colorScheme.primary,
+                                        color: _isCrucibleSwitchover ? Colors.white : Colors.orange.shade800,
                                       ),
-                                      selectedColor: Theme.of(context).colorScheme.primary,
+                                      selectedColor: Colors.orange.shade700,
                                       checkmarkColor: Colors.white,
                                       labelStyle: TextStyle(
-                                        color: isRf ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                                        color: _isCrucibleSwitchover ? Colors.white : Theme.of(context).colorScheme.onSurface,
                                         fontSize: 12,
                                       ),
                                       onSelected: (selected) {
-                                        if (selected) {
-                                          _heatNumberController.text = 'R/F';
-                                        } else {
-                                          _heatNumberController.clear();
-                                        }
+                                        setState(() => _isCrucibleSwitchover = selected);
                                       },
-                                    );
-                                  },
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
+                          if (_isCrucibleSwitchover) ...[
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.shade50,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: Colors.orange.shade300),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.info_outline_rounded, size: 16, color: Colors.orange.shade800),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Crucible Switchover / Breakdown Active: You can enter any heat number (e.g. 1 to start standby crucible, or resume an interrupted cycle like 2, 5, etc.).',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.orange.shade900,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          if (!isEdit && _selectedDeviceId != null) ...[
+                            HeatHintWidget(
+                              deviceId: _selectedDeviceId!,
+                              heatNumberController: _heatNumberController,
+                              isCrucibleSwitchover: _isCrucibleSwitchover,
+                              onEnableSwitchover: () => setState(() => _isCrucibleSwitchover = true),
+                            ),
+                          ],
                         ],
                         const SizedBox(height: 16),
                       ],
