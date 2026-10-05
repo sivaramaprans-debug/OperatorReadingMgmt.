@@ -836,7 +836,7 @@ class ExportReadingsUseCase {
 
     _renderFyTable(
       sheet: sheet,
-      tableTitle: '=== PLANT ENERGY METERS - FINANCIAL YEAR STATEMENT (FY $fyStartYear-$nextYearShort) ===',
+      tableTitle: 'PLANT ENERGY METERS - FINANCIAL YEAR STATEMENT (FY $fyStartYear-$nextYearShort)',
       cycleSubtitle: 'Billing Cycle: Initial Reading on 1st of Month to Final Reading on 1st of Next Month (Day Readings Only)',
       fyStartYear: fyStartYear,
       devices: energyDevices,
@@ -893,7 +893,7 @@ class ExportReadingsUseCase {
       if (sectionDevices.isNotEmpty) {
         _renderFyTable(
           sheet: sheet,
-          tableTitle: '=== ${op.fullName.toUpperCase()} (${code.toUpperCase()}) - FINANCIAL YEAR STATEMENT ===',
+          tableTitle: '${op.fullName.toUpperCase()} (${code.toUpperCase()}) - FINANCIAL YEAR STATEMENT',
           cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
           fyStartYear: fyStartYear,
           devices: sectionDevices,
@@ -943,7 +943,7 @@ class ExportReadingsUseCase {
     if (dedustDevices.isNotEmpty) {
       _renderFyTable(
         sheet: sheet,
-        tableTitle: '=== SPONGE IRON POLLUTION EQUIPMENT (OPERATOR: SPONGE) ===',
+        tableTitle: 'SPONGE IRON POLLUTION EQUIPMENT (OPERATOR: SPONGE)',
         cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
         fyStartYear: fyStartYear,
         devices: dedustDevices,
@@ -976,7 +976,7 @@ class ExportReadingsUseCase {
     if (sidWater.isNotEmpty) {
       _renderFyTable(
         sheet: sheet,
-        tableTitle: '=== SPONGE IRON WATER METERS (OPERATOR: SPONGE) ===',
+        tableTitle: 'SPONGE IRON WATER METERS (OPERATOR: SPONGE)',
         cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
         fyStartYear: fyStartYear,
         devices: sidWater,
@@ -988,7 +988,7 @@ class ExportReadingsUseCase {
     if (rmdWater.isNotEmpty) {
       _renderFyTable(
         sheet: sheet,
-        tableTitle: '=== ROLLING MILL WATER METERS (OPERATOR: ROLLINGMILL) ===',
+        tableTitle: 'ROLLING MILL WATER METERS (OPERATOR: ROLLINGMILL)',
         cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
         fyStartYear: fyStartYear,
         devices: rmdWater,
@@ -1440,7 +1440,7 @@ class ExportReadingsUseCase {
     if (smsOperators.isNotEmpty) {
       for (final op in smsOperators) {
         sections.add((
-          title: '=== ${op.fullName.toUpperCase()} (${op.username.toUpperCase()}) - DAY READINGS ===',
+          title: '${op.fullName.toUpperCase()} (${op.username.toUpperCase()}) - DAY READINGS',
           opId: op.id,
           code: op.username.toLowerCase().replaceAll(' ', ''),
         ));
@@ -1448,7 +1448,7 @@ class ExportReadingsUseCase {
     } else {
       for (final code in targetCodes) {
         sections.add((
-          title: '=== ${code.toUpperCase()} DIVISION - DAY READINGS ===',
+          title: '${code.toUpperCase()} DIVISION - DAY READINGS',
           opId: '',
           code: code,
         ));
@@ -1517,7 +1517,7 @@ class ExportReadingsUseCase {
         if (opDevices.isNotEmpty) {
           _renderOperatorTable(
             sheet: sheet,
-            tableTitle: '=== SPONGE IRON POLLUTION / DEDUSTING (${op.fullName.toUpperCase()}) ===',
+            tableTitle: 'SPONGE IRON POLLUTION / DEDUSTING (${op.fullName.toUpperCase()})',
             cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
             devices: opDevices,
             cycleDates: cycleDates,
@@ -1531,7 +1531,7 @@ class ExportReadingsUseCase {
       if (allDedustingDevices.isNotEmpty) {
         _renderOperatorTable(
           sheet: sheet,
-          tableTitle: '=== SPONGE IRON POLLUTION / DEDUSTING EQUIPMENT ===',
+          tableTitle: 'SPONGE IRON POLLUTION / DEDUSTING EQUIPMENT',
           cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
           devices: allDedustingDevices,
           cycleDates: cycleDates,
@@ -1575,7 +1575,7 @@ class ExportReadingsUseCase {
         if (opDevices.isNotEmpty) {
           _renderOperatorTable(
             sheet: sheet,
-            tableTitle: '=== WATER METERS (${op.fullName.toUpperCase()}) ===',
+            tableTitle: 'WATER METERS (${op.fullName.toUpperCase()})',
             cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
             devices: opDevices,
             cycleDates: cycleDates,
@@ -1591,7 +1591,7 @@ class ExportReadingsUseCase {
       if (sidWater.isNotEmpty) {
         _renderOperatorTable(
           sheet: sheet,
-          tableTitle: '=== SID WATER METERS ===',
+          tableTitle: 'SID WATER METERS',
           cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
           devices: sidWater,
           cycleDates: cycleDates,
@@ -1602,7 +1602,7 @@ class ExportReadingsUseCase {
       if (rmdWater.isNotEmpty) {
         _renderOperatorTable(
           sheet: sheet,
-          tableTitle: '=== RMD WATER METERS ===',
+          tableTitle: 'RMD WATER METERS',
           cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
           devices: rmdWater,
           cycleDates: cycleDates,
