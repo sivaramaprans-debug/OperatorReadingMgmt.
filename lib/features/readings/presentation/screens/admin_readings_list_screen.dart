@@ -15,6 +15,7 @@ import '../notifiers/admin_readings_notifier.dart';
 import '../../domain/usecases/export_readings_usecase.dart';
 import '../widgets/admin_summary_table.dart';
 import '../widgets/readings_calculated_table.dart';
+import '../widgets/monthly_report_dialog.dart';
 
 class AdminReadingsListScreen extends ConsumerStatefulWidget {
   const AdminReadingsListScreen({super.key});
@@ -79,6 +80,11 @@ class _AdminReadingsListScreenState
             icon: const Icon(Icons.download_rounded),
             tooltip: 'Export Readings',
             onSelected: (value) async {
+              if (value == 'monthly_excel') {
+                MonthlyReportDialog.show(context);
+                return;
+              }
+
               final readingsAsync = ref.read(adminReadingsProvider);
               if (readingsAsync.value == null || readingsAsync.value!.isEmpty) {
                 if (mounted) {
@@ -111,12 +117,23 @@ class _AdminReadingsListScreenState
             },
             itemBuilder: (context) => const [
               PopupMenuItem(
+                value: 'monthly_excel',
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_month_rounded, size: 20, color: Colors.teal),
+                    SizedBox(width: 8),
+                    Text('Monthly Report (4 Sheets)'),
+                  ],
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
                 value: 'excel',
                 child: Row(
                   children: [
                     Icon(Icons.table_chart_rounded, size: 20),
                     SizedBox(width: 8),
-                    Text('Export to Excel'),
+                    Text('Export Filtered (Excel)'),
                   ],
                 ),
               ),
@@ -126,7 +143,7 @@ class _AdminReadingsListScreenState
                   children: [
                     Icon(Icons.picture_as_pdf_rounded, size: 20),
                     SizedBox(width: 8),
-                    Text('Export to PDF'),
+                    Text('Export Filtered (PDF)'),
                   ],
                 ),
               ),

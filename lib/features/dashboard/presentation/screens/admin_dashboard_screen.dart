@@ -8,6 +8,7 @@ import '../../../../routing/route_paths.dart';
 import '../../../../shared/widgets/loading_widget.dart';
 import '../../../../shared/widgets/app_update_banner.dart';
 import '../../../auth/presentation/notifiers/auth_notifier.dart';
+import '../../../readings/presentation/widgets/monthly_report_dialog.dart';
 import '../notifiers/admin_dashboard_notifier.dart';
 
 class AdminDashboardScreen extends ConsumerStatefulWidget {
@@ -183,6 +184,12 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
                     icon: Icons.precision_manufacturing_rounded,
                     color: Colors.indigo,
                     onTap: () => context.push(RoutePaths.plantEquipments),
+                  ),
+                  _ActionCard(
+                    title: 'Monthly Report',
+                    icon: Icons.calendar_month_rounded,
+                    color: Colors.green.shade700,
+                    onTap: () => MonthlyReportDialog.show(context),
                   ),
                 ],
               ),

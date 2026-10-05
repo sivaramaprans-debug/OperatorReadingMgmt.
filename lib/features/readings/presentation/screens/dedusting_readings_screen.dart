@@ -14,6 +14,7 @@ import '../../../../routing/route_paths.dart';
 import '../../../../shared/widgets/loading_widget.dart';
 import '../../../../shared/widgets/empty_state_widget.dart';
 import '../notifiers/admin_readings_notifier.dart';
+import '../widgets/monthly_report_dialog.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,13 @@ class _DeddustingReadingsScreenState
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => context.go(RoutePaths.adminDashboard),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            tooltip: 'Export Monthly Report',
+            onPressed: () => MonthlyReportDialog.show(context),
+          ),
+        ],
       ),
       body: Column(
         children: [

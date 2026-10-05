@@ -1,13 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:excel/excel.dart' hide Border;
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
-import 'package:excel/excel.dart' hide Border;
+import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
 
 import '../../../../core/utils/app_date_utils.dart';
+import '../../../../core/utils/reading_calculation_utils.dart';
+import '../../../../database/repositories/supabase_devices_repository.dart';
+import '../../../../database/repositories/supabase_meter_replacement_repository.dart';
+import '../../../../database/repositories/supabase_operators_repository.dart';
 import '../../../../database/repositories/supabase_readings_repository.dart';
 
 class ExportReadingsUseCase {
@@ -37,11 +42,23 @@ class ExportReadingsUseCase {
       }
       Directory? dir;
       if (Platform.isAndroid) {
-        dir = await getExternalStorageDirectory();
+        final downloadDir = Directory('/storage/emulated/0/Download');
+        if (await downloadDir.exists()) {
+          dir = downloadDir;
+        } else {
+          try {
+            dir = await getExternalStorageDirectory();
+          } catch (_) {}
+        }
       } else {
-        dir = await getDownloadsDirectory();
+        try {
+          dir = await getDownloadsDirectory();
+        } catch (_) {}
       }
-      if (dir == null) return null;
+      try {
+        dir ??= await getApplicationDocumentsDirectory();
+      } catch (_) {}
+      dir ??= Directory.systemTemp;
       final filePath = '${dir.path}/$fileName';
       final file = File(filePath);
       await file.writeAsBytes(bytes);
@@ -475,6 +492,705 @@ class ExportReadingsUseCase {
       return false;
     }
   }
+
+  /// Exports a comprehensive 4-sheet monthly report for the billing cycle
+  /// (1st of [month] to 1st of next month) to Excel.
+  Future<String?> generateAndExportMonthlyReport({
+    required int year,
+    required int month, // 1..12
+    required SupabaseDevicesRepository devicesRepo,
+    required SupabaseOperatorsRepository operatorsRepo,
+    required SupabaseReadingsRepository readingsRepo,
+    required SupabaseMeterReplacementRepository replacementsRepo,
+  }) async {
+    final startDate = DateTime(year, month, 1);
+    final endDate = DateTime(year, month + 1, 1);
+    final fromDateMs = AppDateUtils.toLocalMidnightUtcMs(startDate);
+    // Include entire day of the 1st of next month
+    final toDateMs = AppDateUtils.toLocalMidnightUtcMs(endDate) + 86399999;
+
+    final results = await Future.wait([
+      devicesRepo.getAll(),
+      operatorsRepo.getAll(),
+      devicesRepo.getAllActiveAssignments(),
+      replacementsRepo.getAll(),
+      readingsRepo.search(
+        readingType: 'day',
+        fromDateMs: fromDateMs,
+        toDateMs: toDateMs,
+        limit: 10000,
+      ),
+    ]);
+
+    final devices = results[0] as List<SupabaseDevice>;
+    final operators = results[1] as List<SupabaseOperator>;
+    final activeAssignments = results[2] as List<Map<String, dynamic>>;
+    final replacements = results[3] as List<SupabaseMeterReplacement>;
+    final readings = results[4] as List<SupabaseReadingWithDetails>;
+
+    return exportMonthlyReportToExcel(
+      year: year,
+      month: month,
+      devices: devices,
+      operators: operators,
+      activeAssignments: activeAssignments,
+      readings: readings,
+      replacements: replacements,
+    );
+  }
+
+  /// Generates the 4-sheet Excel workbook from pre-fetched data.
+  Future<String?> exportMonthlyReportToExcel({
+    required int year,
+    required int month,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required List<Map<String, dynamic>> activeAssignments,
+    required List<SupabaseReadingWithDetails> readings,
+    required List<SupabaseMeterReplacement> replacements,
+  }) async {
+    try {
+      final excel = Excel.createExcel();
+
+      final startDate = DateTime(year, month, 1);
+      final endDate = DateTime(year, month + 1, 1);
+      final daysInMonth = DateTime(year, month + 1, 0).day;
+      final List<DateTime> cycleDates = [];
+      for (int d = 1; d <= daysInMonth; d++) {
+        cycleDates.add(DateTime(year, month, d));
+      }
+      cycleDates.add(DateTime(year, month + 1, 1)); // 1st of next month
+
+      // Index readings by device and date
+      final Map<String, Map<DateTime, SupabaseReadingWithDetails>> deviceDayReadings = {};
+      for (final rwd in readings) {
+        if (rwd.reading.readingType != 'day') continue;
+        final dt = DateTime.fromMillisecondsSinceEpoch(rwd.reading.readingDate, isUtc: true).toLocal();
+        final dayKey = DateTime(dt.year, dt.month, dt.day);
+        final existing = deviceDayReadings[rwd.reading.deviceId]?[dayKey];
+        if (existing == null || rwd.reading.createdAt > existing.reading.createdAt) {
+          deviceDayReadings.putIfAbsent(rwd.reading.deviceId, () => {})[dayKey] = rwd;
+        }
+      }
+
+      // Index replacements by device
+      final Map<String, List<SupabaseMeterReplacement>> replacementsByDevice = {};
+      for (final rep in replacements) {
+        replacementsByDevice.putIfAbsent(rep.deviceId, () => []).add(rep);
+      }
+
+      // Map operator assignments
+      final Map<String, SupabaseDevice> deviceMap = {for (final d in devices) d.id: d};
+      final Map<String, List<SupabaseDevice>> operatorDevicesMap = {};
+      for (final asgn in activeAssignments) {
+        final opId = asgn['operator_id'] as String?;
+        final devId = asgn['device_id'] as String?;
+        if (opId != null && devId != null && deviceMap.containsKey(devId)) {
+          final dev = deviceMap[devId]!;
+          if (dev.isActive) {
+            operatorDevicesMap.putIfAbsent(opId, () => []).add(dev);
+          }
+        }
+      }
+
+      // 1. Sheet 1: Energy_Abstract
+      _buildEnergyAbstractSheet(
+        excel: excel,
+        startDate: startDate,
+        endDate: endDate,
+        cycleDates: cycleDates,
+        devices: devices,
+        deviceDayReadings: deviceDayReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      // 2. Sheet 2: SMS_Divisions
+      _buildSmsDivisionsSheet(
+        excel: excel,
+        startDate: startDate,
+        endDate: endDate,
+        cycleDates: cycleDates,
+        devices: devices,
+        operators: operators,
+        operatorDevicesMap: operatorDevicesMap,
+        deviceDayReadings: deviceDayReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      // 3. Sheet 3: SID_Dedusting
+      _buildDedustingSheet(
+        excel: excel,
+        startDate: startDate,
+        endDate: endDate,
+        cycleDates: cycleDates,
+        devices: devices,
+        operators: operators,
+        operatorDevicesMap: operatorDevicesMap,
+        deviceDayReadings: deviceDayReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      // 4. Sheet 4: Water_Meters
+      _buildWaterSheet(
+        excel: excel,
+        startDate: startDate,
+        endDate: endDate,
+        cycleDates: cycleDates,
+        devices: devices,
+        operators: operators,
+        operatorDevicesMap: operatorDevicesMap,
+        deviceDayReadings: deviceDayReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      excel.delete('Sheet1');
+
+      final bytes = excel.save();
+      if (bytes == null) return null;
+
+      final monthStr = DateFormat('MMM_yyyy').format(startDate);
+      final fileName = 'Monthly_Plant_Report_$monthStr.xlsx';
+      return await _saveFile(bytes, fileName);
+    } catch (e) {
+      debugPrint('Monthly Report Export Error: $e');
+      return null;
+    }
+  }
+
+  void _buildEnergyAbstractSheet({
+    required Excel excel,
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<DateTime> cycleDates,
+    required List<SupabaseDevice> devices,
+    required Map<String, Map<DateTime, SupabaseReadingWithDetails>> deviceDayReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['Energy_Abstract'];
+    final energyDevices = devices
+        .where((d) => d.isActive && (d.isEnergy || (!d.isDedusting && !d.isWater)))
+        .toList();
+
+    int energyPriority(String name) {
+      final lower = name.toLowerCase().trim();
+      if (lower.contains('132')) return 1;
+      if (lower == 'sid' || lower.startsWith('sid ')) return 2;
+      if (lower.contains('pellet')) return 3;
+      if (lower.contains('ballmill')) return 4;
+      if (lower.contains('solar')) return 5;
+      if (lower.contains('rolling')) return 6;
+      if (lower.contains('sms 1') || lower.contains('sms1')) return 7;
+      if (lower == 'sms2' || lower.contains('sms 2')) return 8;
+      if (lower == 'sms 3' || lower.contains('sms3')) return 9;
+      if (lower == 'sms4' || lower.contains('sms 4')) return 10;
+      return 100;
+    }
+
+    energyDevices.sort((a, b) => energyPriority(a.name).compareTo(energyPriority(b.name)));
+
+    final startStr = DateFormat('dd-MMM-yyyy').format(startDate);
+    final endStr = DateFormat('dd-MMM-yyyy').format(endDate);
+    final monthHeader = DateFormat('MMMM yyyy').format(startDate);
+
+    _renderOperatorTable(
+      sheet: sheet,
+      tableTitle: 'PLANT ENERGY METERS - MONTHLY ABSTRACT ($monthHeader)',
+      cycleSubtitle: 'Billing Cycle: $startStr to $endStr (Day Readings Only)',
+      devices: energyDevices,
+      cycleDates: cycleDates,
+      deviceDayReadings: deviceDayReadings,
+      replacementsByDevice: replacementsByDevice,
+    );
+  }
+
+  void _buildSmsDivisionsSheet({
+    required Excel excel,
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<DateTime> cycleDates,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required Map<String, List<SupabaseDevice>> operatorDevicesMap,
+    required Map<String, Map<DateTime, SupabaseReadingWithDetails>> deviceDayReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['SMS_Divisions'];
+    final startStr = DateFormat('dd-MMM-yyyy').format(startDate);
+    final endStr = DateFormat('dd-MMM-yyyy').format(endDate);
+
+    sheet.appendRow([TextCellValue('SMS DIVISIONS - MONTHLY DAY READINGS')]);
+    sheet.appendRow([TextCellValue('Billing Cycle: $startStr to $endStr')]);
+    sheet.appendRow([TextCellValue('')]);
+
+    final smsOperators = operators
+        .where((op) =>
+            op.username.toLowerCase().contains('sms') ||
+            op.fullName.toLowerCase().contains('sms'))
+        .toList()
+      ..sort((a, b) => a.username.compareTo(b.username));
+
+    final targetCodes = ['sms2', 'sms3', 'sms4'];
+    final List<({String title, String opId, String code})> sections = [];
+    if (smsOperators.isNotEmpty) {
+      for (final op in smsOperators) {
+        sections.add((
+          title: '=== ${op.fullName.toUpperCase()} (${op.username.toUpperCase()}) - DAY READINGS ===',
+          opId: op.id,
+          code: op.username.toLowerCase().replaceAll(' ', ''),
+        ));
+      }
+    } else {
+      for (final code in targetCodes) {
+        sections.add((
+          title: '=== ${code.toUpperCase()} DIVISION - DAY READINGS ===',
+          opId: '',
+          code: code,
+        ));
+      }
+    }
+
+    for (final sec in sections) {
+      final assigned = sec.opId.isNotEmpty ? (operatorDevicesMap[sec.opId] ?? []) : <SupabaseDevice>[];
+      final sectionDevices = devices.where((d) {
+        if (!d.isActive) return false;
+        if (assigned.any((ad) => ad.id == d.id)) return true;
+        final dName = d.name.toLowerCase().replaceAll(' ', '');
+        return dName.startsWith(sec.code) || dName.contains(sec.code);
+      }).toSet().toList();
+
+      sectionDevices.sort((a, b) {
+        if (a.requiresHeatDay && !b.requiresHeatDay) return -1;
+        if (!a.requiresHeatDay && b.requiresHeatDay) return 1;
+        return a.name.compareTo(b.name);
+      });
+
+      if (sectionDevices.isNotEmpty) {
+        _renderOperatorTable(
+          sheet: sheet,
+          tableTitle: sec.title,
+          cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
+          devices: sectionDevices,
+          cycleDates: cycleDates,
+          deviceDayReadings: deviceDayReadings,
+          replacementsByDevice: replacementsByDevice,
+        );
+      }
+    }
+  }
+
+  void _buildDedustingSheet({
+    required Excel excel,
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<DateTime> cycleDates,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required Map<String, List<SupabaseDevice>> operatorDevicesMap,
+    required Map<String, Map<DateTime, SupabaseReadingWithDetails>> deviceDayReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['SID_Dedusting'];
+    final startStr = DateFormat('dd-MMM-yyyy').format(startDate);
+    final endStr = DateFormat('dd-MMM-yyyy').format(endDate);
+
+    sheet.appendRow([TextCellValue('SPONGE IRON POLLUTION / DEDUSTING EQUIPMENT - MONTHLY REPORT')]);
+    sheet.appendRow([TextCellValue('Billing Cycle: $startStr to $endStr')]);
+    sheet.appendRow([TextCellValue('')]);
+
+    final allDedustingDevices = devices.where((d) => d.isActive && d.isDedusting).toList();
+    final dedustingOperators = operators.where((op) =>
+        (operatorDevicesMap[op.id] ?? []).any((d) => d.isDedusting)).toList();
+
+    if (dedustingOperators.isNotEmpty) {
+      for (final op in dedustingOperators) {
+        final opDevices = (operatorDevicesMap[op.id] ?? [])
+            .where((d) => d.isActive && d.isDedusting)
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+
+        if (opDevices.isNotEmpty) {
+          _renderOperatorTable(
+            sheet: sheet,
+            tableTitle: '=== SPONGE IRON POLLUTION / DEDUSTING (${op.fullName.toUpperCase()}) ===',
+            cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
+            devices: opDevices,
+            cycleDates: cycleDates,
+            deviceDayReadings: deviceDayReadings,
+            replacementsByDevice: replacementsByDevice,
+          );
+        }
+      }
+    } else {
+      allDedustingDevices.sort((a, b) => a.name.compareTo(b.name));
+      if (allDedustingDevices.isNotEmpty) {
+        _renderOperatorTable(
+          sheet: sheet,
+          tableTitle: '=== SPONGE IRON POLLUTION / DEDUSTING EQUIPMENT ===',
+          cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
+          devices: allDedustingDevices,
+          cycleDates: cycleDates,
+          deviceDayReadings: deviceDayReadings,
+          replacementsByDevice: replacementsByDevice,
+        );
+      }
+    }
+  }
+
+  void _buildWaterSheet({
+    required Excel excel,
+    required DateTime startDate,
+    required DateTime endDate,
+    required List<DateTime> cycleDates,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required Map<String, List<SupabaseDevice>> operatorDevicesMap,
+    required Map<String, Map<DateTime, SupabaseReadingWithDetails>> deviceDayReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['Water_Meters'];
+    final startStr = DateFormat('dd-MMM-yyyy').format(startDate);
+    final endStr = DateFormat('dd-MMM-yyyy').format(endDate);
+
+    sheet.appendRow([TextCellValue('PLANT WATER METERS - MONTHLY REPORT')]);
+    sheet.appendRow([TextCellValue('Billing Cycle: $startStr to $endStr')]);
+    sheet.appendRow([TextCellValue('')]);
+
+    final allWaterDevices = devices.where((d) => d.isActive && d.isWater).toList();
+    final waterOperators = operators.where((op) =>
+        (operatorDevicesMap[op.id] ?? []).any((d) => d.isWater)).toList();
+
+    if (waterOperators.isNotEmpty) {
+      for (final op in waterOperators) {
+        final opDevices = (operatorDevicesMap[op.id] ?? [])
+            .where((d) => d.isActive && d.isWater)
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+
+        if (opDevices.isNotEmpty) {
+          _renderOperatorTable(
+            sheet: sheet,
+            tableTitle: '=== WATER METERS (${op.fullName.toUpperCase()}) ===',
+            cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
+            devices: opDevices,
+            cycleDates: cycleDates,
+            deviceDayReadings: deviceDayReadings,
+            replacementsByDevice: replacementsByDevice,
+          );
+        }
+      }
+    } else {
+      final sidWater = allWaterDevices.where((d) => d.name.toUpperCase().contains('SID')).toList();
+      final rmdWater = allWaterDevices.where((d) => !d.name.toUpperCase().contains('SID')).toList();
+
+      if (sidWater.isNotEmpty) {
+        _renderOperatorTable(
+          sheet: sheet,
+          tableTitle: '=== SID WATER METERS ===',
+          cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
+          devices: sidWater,
+          cycleDates: cycleDates,
+          deviceDayReadings: deviceDayReadings,
+          replacementsByDevice: replacementsByDevice,
+        );
+      }
+      if (rmdWater.isNotEmpty) {
+        _renderOperatorTable(
+          sheet: sheet,
+          tableTitle: '=== RMD WATER METERS ===',
+          cycleSubtitle: 'Billing Cycle: $startStr to $endStr',
+          devices: rmdWater,
+          cycleDates: cycleDates,
+          deviceDayReadings: deviceDayReadings,
+          replacementsByDevice: replacementsByDevice,
+        );
+      }
+    }
+  }
+
+  CellValue _formatDoubleCell(double? val) {
+    if (val == null) return TextCellValue('');
+    if (val % 1 == 0) {
+      return DoubleCellValue(val);
+    }
+    return DoubleCellValue(double.parse(val.toStringAsFixed(2)));
+  }
+
+  void _renderOperatorTable({
+    required Sheet sheet,
+    required String tableTitle,
+    required String cycleSubtitle,
+    required List<SupabaseDevice> devices,
+    required List<DateTime> cycleDates,
+    required Map<String, Map<DateTime, SupabaseReadingWithDetails>> deviceDayReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    if (devices.isEmpty) return;
+
+    sheet.appendRow([TextCellValue(tableTitle)]);
+    sheet.appendRow([TextCellValue(cycleSubtitle)]);
+
+    final List<_ColumnDef> colDefs = [];
+
+    for (final d in devices) {
+      if (d.requiresHeatDay || d.dayMatrix.split(',').length > 1) {
+        final rawUnits = (d.dayMatrix.isNotEmpty ? d.dayMatrix : d.matrix)
+            .split(',')
+            .map((s) => s.trim().toUpperCase())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        final units = rawUnits.isNotEmpty ? rawUnits : ['KWH', 'KWHLT'];
+        for (final u in units) {
+          final mfStr = d.multiplicationFactor > 0 ? d.multiplicationFactor.toStringAsFixed(0) : '1';
+          if (u == 'PF') {
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'PF',
+              type: _ColumnType.pf,
+            ));
+          } else {
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Reading',
+              type: _ColumnType.reading,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Diff',
+              type: _ColumnType.diff,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Units',
+              type: _ColumnType.consumption,
+            ));
+          }
+        }
+      } else {
+        final unit = d.singleMetric.isNotEmpty ? d.singleMetric : 'KWH';
+        final mfLabel = d.multiplicationFactor > 0 ? d.multiplicationFactor.toStringAsFixed(0) : '1';
+        colDefs.add(_ColumnDef(
+          device: d,
+          unit: unit,
+          headerDevice: '${d.name} (MF: $mfLabel)',
+          headerMetric: 'Reading',
+          type: _ColumnType.reading,
+        ));
+        colDefs.add(_ColumnDef(
+          device: d,
+          unit: unit,
+          headerDevice: '${d.name} (MF: $mfLabel)',
+          headerMetric: 'Diff',
+          type: _ColumnType.diff,
+        ));
+        colDefs.add(_ColumnDef(
+          device: d,
+          unit: unit,
+          headerDevice: '${d.name} (MF: $mfLabel)',
+          headerMetric: 'MF',
+          type: _ColumnType.mf,
+        ));
+        colDefs.add(_ColumnDef(
+          device: d,
+          unit: unit,
+          headerDevice: '${d.name} (MF: $mfLabel)',
+          headerMetric: 'Units',
+          type: _ColumnType.consumption,
+        ));
+      }
+    }
+
+    // Header Row 1: Device Names
+    final headerRow1 = <CellValue?>[TextCellValue('Date')];
+    for (final col in colDefs) {
+      headerRow1.add(TextCellValue(col.headerDevice));
+    }
+    sheet.appendRow(headerRow1);
+
+    // Header Row 2: Metrics
+    final headerRow2 = <CellValue?>[TextCellValue('')];
+    for (final col in colDefs) {
+      headerRow2.add(TextCellValue(col.headerMetric));
+    }
+    sheet.appendRow(headerRow2);
+
+    // Date Rows
+    for (int t = 0; t < cycleDates.length; t++) {
+      final date = cycleDates[t];
+      final prevDate = t > 0 ? cycleDates[t - 1] : date.subtract(const Duration(days: 1));
+      final dateStr = DateFormat('dd-MMM-yyyy').format(date);
+      final row = <CellValue?>[TextCellValue(dateStr)];
+
+      for (final col in colDefs) {
+        final d = col.device;
+        final rwd = deviceDayReadings[d.id]?[date];
+        final prevRwd = deviceDayReadings[d.id]?[prevDate];
+
+        if (rwd == null) {
+          row.add(TextCellValue(''));
+          continue;
+        }
+
+        final vals = ReadingCalculationUtils.parseValues(rwd.reading.readingValues);
+        final prevVals = prevRwd != null
+            ? ReadingCalculationUtils.parseValues(prevRwd.reading.readingValues)
+            : null;
+
+        final curVal = vals[col.unit] ?? vals[col.unit.toLowerCase()];
+        final prevVal = prevVals?[col.unit] ?? prevVals?[col.unit.toLowerCase()];
+
+        final factor = ReadingCalculationUtils.resolveEffectiveFactor(
+          readingDateMs: rwd.reading.readingDate,
+          unit: col.unit,
+          readingType: 'day',
+          currentDeviceMf: d.multiplicationFactor,
+          dayUnitFactorsJson: d.dayUnitFactors,
+          heatUnitFactorsJson: d.heatUnitFactors,
+          replacements: replacementsByDevice[d.id] ?? [],
+        );
+
+        double? diff;
+        if (curVal != null && prevVal != null) {
+          diff = ReadingCalculationUtils.calculateDifference(curVal, prevVal);
+        }
+        final consump = diff != null ? diff * factor : null;
+
+        switch (col.type) {
+          case _ColumnType.reading:
+            row.add(_formatDoubleCell(curVal));
+            break;
+          case _ColumnType.diff:
+            row.add(_formatDoubleCell(diff));
+            break;
+          case _ColumnType.mf:
+            row.add(DoubleCellValue(factor));
+            break;
+          case _ColumnType.consumption:
+            row.add(_formatDoubleCell(consump));
+            break;
+          case _ColumnType.pf:
+            row.add(_formatDoubleCell(curVal));
+            break;
+        }
+      }
+      sheet.appendRow(row);
+    }
+
+    // Summary Rows
+    final startDateStr = DateFormat('MMM').format(cycleDates.first);
+    final endDateStr = DateFormat('MMM').format(cycleDates.last);
+
+    // 1. Initial Reading Row
+    final initRow = <CellValue?>[TextCellValue('Initial Reading (01-$startDateStr)')];
+    for (final col in colDefs) {
+      if (col.type == _ColumnType.reading) {
+        final rwd = deviceDayReadings[col.device.id]?[cycleDates.first];
+        final vals = rwd != null ? ReadingCalculationUtils.parseValues(rwd.reading.readingValues) : null;
+        final val = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
+        initRow.add(_formatDoubleCell(val));
+      } else {
+        initRow.add(TextCellValue('-'));
+      }
+    }
+    sheet.appendRow(initRow);
+
+    // 2. Final Reading Row
+    final finalRow = <CellValue?>[TextCellValue('Final Reading (01-$endDateStr)')];
+    for (final col in colDefs) {
+      if (col.type == _ColumnType.reading) {
+        final rwd = deviceDayReadings[col.device.id]?[cycleDates.last];
+        final vals = rwd != null ? ReadingCalculationUtils.parseValues(rwd.reading.readingValues) : null;
+        final val = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
+        finalRow.add(_formatDoubleCell(val));
+      } else {
+        finalRow.add(TextCellValue('-'));
+      }
+    }
+    sheet.appendRow(finalRow);
+
+    // 3. Net Difference Row
+    final netDiffRow = <CellValue?>[TextCellValue('Net Difference')];
+    for (final col in colDefs) {
+      if (col.type == _ColumnType.diff) {
+        final initRwd = deviceDayReadings[col.device.id]?[cycleDates.first];
+        final finalRwd = deviceDayReadings[col.device.id]?[cycleDates.last];
+        final initVals = initRwd != null ? ReadingCalculationUtils.parseValues(initRwd.reading.readingValues) : null;
+        final finalVals = finalRwd != null ? ReadingCalculationUtils.parseValues(finalRwd.reading.readingValues) : null;
+        final initVal = initVals?[col.unit] ?? initVals?[col.unit.toLowerCase()];
+        final finalVal = finalVals?[col.unit] ?? finalVals?[col.unit.toLowerCase()];
+        if (initVal != null && finalVal != null) {
+          final net = ReadingCalculationUtils.calculateDifference(finalVal, initVal);
+          netDiffRow.add(_formatDoubleCell(net));
+        } else {
+          netDiffRow.add(TextCellValue(''));
+        }
+      } else {
+        netDiffRow.add(TextCellValue('-'));
+      }
+    }
+    sheet.appendRow(netDiffRow);
+
+    // 4. Total Consumption Row
+    final totalRow = <CellValue?>[TextCellValue('Total Consumption')];
+    for (final col in colDefs) {
+      if (col.type == _ColumnType.consumption) {
+        final initRwd = deviceDayReadings[col.device.id]?[cycleDates.first];
+        final finalRwd = deviceDayReadings[col.device.id]?[cycleDates.last];
+        final initVals = initRwd != null ? ReadingCalculationUtils.parseValues(initRwd.reading.readingValues) : null;
+        final finalVals = finalRwd != null ? ReadingCalculationUtils.parseValues(finalRwd.reading.readingValues) : null;
+        final initVal = initVals?[col.unit] ?? initVals?[col.unit.toLowerCase()];
+        final finalVal = finalVals?[col.unit] ?? finalVals?[col.unit.toLowerCase()];
+        if (initVal != null && finalVal != null) {
+          final net = ReadingCalculationUtils.calculateDifference(finalVal, initVal);
+          final factor = ReadingCalculationUtils.resolveEffectiveFactor(
+            readingDateMs: AppDateUtils.toLocalMidnightUtcMs(cycleDates.last),
+            unit: col.unit,
+            readingType: 'day',
+            currentDeviceMf: col.device.multiplicationFactor,
+            dayUnitFactorsJson: col.device.dayUnitFactors,
+            heatUnitFactorsJson: col.device.heatUnitFactors,
+            replacements: replacementsByDevice[col.device.id] ?? [],
+          );
+          final total = net * factor;
+          totalRow.add(_formatDoubleCell(total));
+        } else {
+          totalRow.add(TextCellValue(''));
+        }
+      } else {
+        totalRow.add(TextCellValue('-'));
+      }
+    }
+    sheet.appendRow(totalRow);
+
+    sheet.appendRow([TextCellValue('')]);
+    sheet.appendRow([TextCellValue('')]);
+    sheet.appendRow([TextCellValue('')]);
+  }
+}
+
+enum _ColumnType { reading, diff, mf, consumption, pf }
+
+class _ColumnDef {
+  final SupabaseDevice device;
+  final String unit;
+  final String headerDevice;
+  final String headerMetric;
+  final _ColumnType type;
+
+  _ColumnDef({
+    required this.device,
+    required this.unit,
+    required this.headerDevice,
+    required this.headerMetric,
+    required this.type,
+  });
 }
 
 class _GroupedHeatRow {

@@ -16,6 +16,7 @@ import '../../../../shared/widgets/loading_widget.dart';
 import '../../../../shared/widgets/empty_state_widget.dart';
 import '../../domain/usecases/export_readings_usecase.dart';
 import '../notifiers/admin_readings_notifier.dart';
+import 'monthly_report_dialog.dart';
 
 /// Summary table displayed in the Admin panel.
 /// [readingType] = 'day' or 'heat'
@@ -592,6 +593,22 @@ class _SummaryTableViewState extends ConsumerState<_SummaryTableView> {
                           });
                         },
                       ),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.teal.shade800,
+                          side: BorderSide(color: Colors.teal.shade600),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: const Icon(Icons.calendar_month_rounded, size: 16),
+                        label: const Text(
+                          'Monthly Report',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                        onPressed: () => MonthlyReportDialog.show(context),
+                      ),
+                      const SizedBox(width: 8),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.primary,

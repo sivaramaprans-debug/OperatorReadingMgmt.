@@ -120,6 +120,15 @@ class SupabaseDevicesRepository {
     return (data as List).map((m) => SupabaseDevice.fromMap(m as Map<String, dynamic>)).toList();
   }
 
+  /// Returns all active assignments as a list of maps with operator_id and device_id.
+  Future<List<Map<String, dynamic>>> getAllActiveAssignments() async {
+    final data = await supabase
+        .from(_assignmentsTable)
+        .select('operator_id, device_id')
+        .eq('is_active', true);
+    return (data as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
   Future<String> create({
     required String name,
     required double multiplicationFactor,
