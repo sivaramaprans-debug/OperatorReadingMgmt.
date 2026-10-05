@@ -505,9 +505,11 @@ class ExportReadingsUseCase {
   }) async {
     final startDate = DateTime(year, month, 1);
     final endDate = DateTime(year, month + 1, 1);
-    final fromDateMs = AppDateUtils.toLocalMidnightUtcMs(startDate);
+    // Buffer query start by 2 days so predecessor reading on 31st or 1st is always present
+    final fromDateMs = AppDateUtils.toLocalMidnightUtcMs(startDate.subtract(const Duration(days: 2)));
     // Include entire day of the 1st of next month
     final toDateMs = AppDateUtils.toLocalMidnightUtcMs(endDate) + 86399999;
+
 
     final results = await Future.wait([
       devicesRepo.getAll(),
@@ -655,6 +657,710 @@ class ExportReadingsUseCase {
       debugPrint('Monthly Report Export Error: $e');
       return null;
     }
+  }
+
+
+  /// Generates and exports the complete Financial Year statement (12 Months: April to March + Total FY).
+  Future<String?> generateAndExportFinancialYearStatement({
+    required int fyStartYear,
+    required SupabaseDevicesRepository devicesRepo,
+    required SupabaseOperatorsRepository operatorsRepo,
+    required SupabaseReadingsRepository readingsRepo,
+    required SupabaseMeterReplacementRepository replacementsRepo,
+  }) async {
+    final startDate = DateTime(fyStartYear, 4, 1);
+    final endDate = DateTime(fyStartYear + 1, 4, 1);
+    final fromDateMs = AppDateUtils.toLocalMidnightUtcMs(startDate.subtract(const Duration(days: 2)));
+    final toDateMs = AppDateUtils.toLocalMidnightUtcMs(endDate) + 86399999;
+
+    final results = await Future.wait([
+      devicesRepo.getAll(),
+      operatorsRepo.getAll(),
+      devicesRepo.getAllActiveAssignments(),
+      replacementsRepo.getAll(),
+      readingsRepo.search(
+        readingType: 'day',
+        fromDateMs: fromDateMs,
+        toDateMs: toDateMs,
+        limit: 10000,
+      ),
+    ]);
+
+    final devices = results[0] as List<SupabaseDevice>;
+    final operators = results[1] as List<SupabaseOperator>;
+    final activeAssignments = results[2] as List<Map<String, dynamic>>;
+    final replacements = results[3] as List<SupabaseMeterReplacement>;
+    final readings = results[4] as List<SupabaseReadingWithDetails>;
+
+    return exportFinancialYearStatementToExcel(
+      fyStartYear: fyStartYear,
+      devices: devices,
+      operators: operators,
+      activeAssignments: activeAssignments,
+      readings: readings,
+      replacements: replacements,
+    );
+  }
+
+  /// Generates the 4-sheet Financial Year statement workbook.
+  Future<String?> exportFinancialYearStatementToExcel({
+    required int fyStartYear,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required List<Map<String, dynamic>> activeAssignments,
+    required List<SupabaseReadingWithDetails> readings,
+    required List<SupabaseMeterReplacement> replacements,
+  }) async {
+    try {
+      final excel = Excel.createExcel();
+
+      // Index 1st of month readings by device and 'year_month'
+      final Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings = {};
+      for (final rwd in readings) {
+        if (rwd.reading.readingType != 'day') continue;
+        final dt = DateTime.fromMillisecondsSinceEpoch(rwd.reading.readingDate, isUtc: true).toLocal();
+        if (dt.day == 1) {
+          final ymKey = '${dt.year}_${dt.month}';
+          final existing = deviceMonthReadings[rwd.reading.deviceId]?[ymKey];
+          if (existing == null || rwd.reading.createdAt > existing.reading.createdAt) {
+            deviceMonthReadings.putIfAbsent(rwd.reading.deviceId, () => {})[ymKey] = rwd;
+          }
+        }
+      }
+
+      // Index replacements
+      final Map<String, List<SupabaseMeterReplacement>> replacementsByDevice = {};
+      for (final rep in replacements) {
+        replacementsByDevice.putIfAbsent(rep.deviceId, () => []).add(rep);
+      }
+
+      // Map operator assignments
+      final Map<String, SupabaseDevice> deviceMap = {for (final d in devices) d.id: d};
+      final Map<String, List<SupabaseDevice>> operatorDevicesMap = {};
+      for (final asgn in activeAssignments) {
+        final opId = asgn['operator_id'] as String?;
+        final devId = asgn['device_id'] as String?;
+        if (opId != null && devId != null && deviceMap.containsKey(devId)) {
+          final dev = deviceMap[devId]!;
+          if (dev.isActive) {
+            operatorDevicesMap.putIfAbsent(opId, () => []).add(dev);
+          }
+        }
+      }
+
+      // 1. Sheet 1: Energy_Abstract
+      _buildFyEnergyAbstractSheet(
+        excel: excel,
+        fyStartYear: fyStartYear,
+        devices: devices,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      // 2. Sheet 2: SMS_Divisions
+      _buildFySmsDivisionsSheet(
+        excel: excel,
+        fyStartYear: fyStartYear,
+        devices: devices,
+        operators: operators,
+        operatorDevicesMap: operatorDevicesMap,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      // 3. Sheet 3: SID_Dedusting
+      _buildFyDedustingSheet(
+        excel: excel,
+        fyStartYear: fyStartYear,
+        devices: devices,
+        operators: operators,
+        operatorDevicesMap: operatorDevicesMap,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      // 4. Sheet 4: Water_Meters
+      _buildFyWaterSheet(
+        excel: excel,
+        fyStartYear: fyStartYear,
+        devices: devices,
+        operators: operators,
+        operatorDevicesMap: operatorDevicesMap,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+
+      excel.delete('Sheet1');
+
+      final bytes = excel.save();
+      if (bytes == null) return null;
+
+      final nextYearShort = (fyStartYear + 1).toString().substring(2);
+      final fileName = 'Financial_Year_Report_FY${fyStartYear}_$nextYearShort.xlsx';
+      return await _saveFile(bytes, fileName);
+    } catch (e) {
+      debugPrint('Financial Year Report Export Error: $e');
+      return null;
+    }
+  }
+
+  void _buildFyEnergyAbstractSheet({
+    required Excel excel,
+    required int fyStartYear,
+    required List<SupabaseDevice> devices,
+    required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['Energy_Abstract'];
+    final energyDevices = devices
+        .where((d) => d.isActive && (d.isEnergy || (!d.isDedusting && !d.isWater)))
+        .toList();
+
+    int energyPriority(String name) {
+      final lower = name.toLowerCase().trim();
+      if (lower.contains('132')) return 1;
+      if (lower == 'sid' || lower.startsWith('sid ')) return 2;
+      if (lower.contains('pellet')) return 3;
+      if (lower.contains('ballmill')) return 4;
+      if (lower.contains('solar')) return 5;
+      if (lower.contains('rolling')) return 6;
+      if (lower.contains('sms 1') || lower.contains('sms1')) return 7;
+      if (lower == 'sms2' || lower.contains('sms 2')) return 8;
+      if (lower == 'sms 3' || lower.contains('sms3')) return 9;
+      if (lower == 'sms4' || lower.contains('sms 4')) return 10;
+      return 100;
+    }
+
+    energyDevices.sort((a, b) => energyPriority(a.name).compareTo(energyPriority(b.name)));
+    final nextYearShort = (fyStartYear + 1).toString().substring(2);
+
+    _renderFyTable(
+      sheet: sheet,
+      tableTitle: '=== PLANT ENERGY METERS - FINANCIAL YEAR STATEMENT (FY $fyStartYear-$nextYearShort) ===',
+      cycleSubtitle: 'Billing Cycle: Initial Reading on 1st of Month to Final Reading on 1st of Next Month (Day Readings Only)',
+      fyStartYear: fyStartYear,
+      devices: energyDevices,
+      deviceMonthReadings: deviceMonthReadings,
+      replacementsByDevice: replacementsByDevice,
+    );
+  }
+
+  void _buildFySmsDivisionsSheet({
+    required Excel excel,
+    required int fyStartYear,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required Map<String, List<SupabaseDevice>> operatorDevicesMap,
+    required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['SMS_Divisions'];
+    final nextYearShort = (fyStartYear + 1).toString().substring(2);
+
+    sheet.appendRow([TextCellValue('SMS DIVISIONS - FINANCIAL YEAR STATEMENT (FY $fyStartYear-$nextYearShort)')]);
+    sheet.appendRow([TextCellValue('Separate Table for Each Operator | Billing Cycle: 1st of Month to 1st of Next Month')]);
+    sheet.appendRow([TextCellValue('')]);
+
+    final targetCodes = ['sms2', 'sms3', 'sms4'];
+    for (final code in targetCodes) {
+      final op = operators.firstWhere(
+        (o) => o.username.toLowerCase().replaceAll(' ', '') == code,
+        orElse: () => SupabaseOperator(
+          id: '',
+          username: code,
+          fullName: code.toUpperCase(),
+          passwordHash: '',
+          role: 'operator',
+          isActive: true,
+          createdAt: 0,
+        ),
+      );
+
+      final assigned = op.id.isNotEmpty ? (operatorDevicesMap[op.id] ?? []) : <SupabaseDevice>[];
+      final sectionDevices = devices.where((d) {
+        if (!d.isActive) return false;
+        if (assigned.any((ad) => ad.id == d.id)) return true;
+        final dName = d.name.toLowerCase().replaceAll(' ', '');
+        return dName.startsWith(code) || dName.contains(code);
+      }).toSet().toList();
+
+      sectionDevices.sort((a, b) {
+        if (a.name.toUpperCase().replaceAll(' ', '') == code.toUpperCase()) return -1;
+        if (b.name.toUpperCase().replaceAll(' ', '') == code.toUpperCase()) return 1;
+        return a.name.compareTo(b.name);
+      });
+
+      if (sectionDevices.isNotEmpty) {
+        _renderFyTable(
+          sheet: sheet,
+          tableTitle: '=== ${op.fullName.toUpperCase()} (${code.toUpperCase()}) - FINANCIAL YEAR STATEMENT ===',
+          cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
+          fyStartYear: fyStartYear,
+          devices: sectionDevices,
+          deviceMonthReadings: deviceMonthReadings,
+          replacementsByDevice: replacementsByDevice,
+        );
+      }
+    }
+  }
+
+  void _buildFyDedustingSheet({
+    required Excel excel,
+    required int fyStartYear,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required Map<String, List<SupabaseDevice>> operatorDevicesMap,
+    required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['SID_Dedusting'];
+    final nextYearShort = (fyStartYear + 1).toString().substring(2);
+
+    sheet.appendRow([TextCellValue('SPONGE IRON POLLUTION / DEDUSTING - FINANCIAL YEAR STATEMENT (FY $fyStartYear-$nextYearShort)')]);
+    sheet.appendRow([TextCellValue('Sponge Iron Pollution Equipment | Billing Cycle: 1st of Month to 1st of Next Month')]);
+    sheet.appendRow([TextCellValue('')]);
+
+    final spongeOp = operators.firstWhere(
+      (o) => o.username.toLowerCase() == 'sponge',
+      orElse: () => const SupabaseOperator(
+        id: '',
+        username: 'Sponge',
+        fullName: 'Sponge Iron',
+        passwordHash: '',
+        role: 'operator',
+        isActive: true,
+        createdAt: 0,
+      ),
+    );
+
+    final assigned = spongeOp.id.isNotEmpty ? (operatorDevicesMap[spongeOp.id] ?? []) : <SupabaseDevice>[];
+    final dedustDevices = devices.where((d) {
+      if (!d.isActive || !d.isDedusting) return false;
+      if (assigned.any((ad) => ad.id == d.id)) return true;
+      return !d.name.toUpperCase().contains('SMS');
+    }).toSet().toList()..sort((a, b) => a.name.compareTo(b.name));
+
+    if (dedustDevices.isNotEmpty) {
+      _renderFyTable(
+        sheet: sheet,
+        tableTitle: '=== SPONGE IRON POLLUTION EQUIPMENT (OPERATOR: SPONGE) ===',
+        cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
+        fyStartYear: fyStartYear,
+        devices: dedustDevices,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+    }
+  }
+
+  void _buildFyWaterSheet({
+    required Excel excel,
+    required int fyStartYear,
+    required List<SupabaseDevice> devices,
+    required List<SupabaseOperator> operators,
+    required Map<String, List<SupabaseDevice>> operatorDevicesMap,
+    required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    final sheet = excel['Water_Meters'];
+    final nextYearShort = (fyStartYear + 1).toString().substring(2);
+
+    sheet.appendRow([TextCellValue('PLANT WATER METERS - FINANCIAL YEAR STATEMENT (FY $fyStartYear-$nextYearShort)')]);
+    sheet.appendRow([TextCellValue('Separate Table for Each Operator | Billing Cycle: 1st of Month to 1st of Next Month')]);
+    sheet.appendRow([TextCellValue('')]);
+
+    final allWater = devices.where((d) => d.isActive && d.isWater).toList();
+    final sidWater = allWater.where((d) => d.name.toUpperCase().contains('SID')).toList()..sort((a, b) => a.name.compareTo(b.name));
+    final rmdWater = allWater.where((d) => !d.name.toUpperCase().contains('SID')).toList()..sort((a, b) => a.name.compareTo(b.name));
+
+    if (sidWater.isNotEmpty) {
+      _renderFyTable(
+        sheet: sheet,
+        tableTitle: '=== SPONGE IRON WATER METERS (OPERATOR: SPONGE) ===',
+        cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
+        fyStartYear: fyStartYear,
+        devices: sidWater,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+    }
+
+    if (rmdWater.isNotEmpty) {
+      _renderFyTable(
+        sheet: sheet,
+        tableTitle: '=== ROLLING MILL WATER METERS (OPERATOR: ROLLINGMILL) ===',
+        cycleSubtitle: 'Billing Cycle: 1st of Month to 1st of Next Month',
+        fyStartYear: fyStartYear,
+        devices: rmdWater,
+        deviceMonthReadings: deviceMonthReadings,
+        replacementsByDevice: replacementsByDevice,
+      );
+    }
+  }
+
+  void _renderFyTable({
+    required Sheet sheet,
+    required String tableTitle,
+    required String cycleSubtitle,
+    required int fyStartYear,
+    required List<SupabaseDevice> devices,
+    required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
+    required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+  }) {
+    if (devices.isEmpty) return;
+
+    sheet.appendRow([TextCellValue(tableTitle)]);
+    sheet.appendRow([TextCellValue(cycleSubtitle)]);
+
+    final List<_ColumnDef> colDefs = [];
+
+    for (final d in devices) {
+      if (d.requiresHeatDay || d.dayMatrix.split(',').length > 1) {
+        final rawUnits = (d.dayMatrix.isNotEmpty ? d.dayMatrix : d.matrix)
+            .split(',')
+            .map((s) => s.trim().toUpperCase())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        final units = rawUnits.isNotEmpty ? rawUnits : ['KWH', 'KWHLT'];
+        for (final u in units) {
+          final mfStr = d.multiplicationFactor > 0 ? d.multiplicationFactor.toStringAsFixed(0) : '1';
+          if (u == 'PF') {
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'PF',
+              type: _ColumnType.pf,
+            ));
+          } else if (u == 'MD') {
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MD Reading',
+              type: _ColumnType.mdReading,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MF',
+              type: _ColumnType.mf,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MD Recorded',
+              type: _ColumnType.mdRecorded,
+            ));
+          } else {
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Initial (01st)',
+              type: _ColumnType.reading,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Final (01st)',
+              type: _ColumnType.reading,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Diff',
+              type: _ColumnType.diff,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MF',
+              type: _ColumnType.mf,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: '$u Units',
+              type: _ColumnType.consumption,
+            ));
+          }
+        }
+      } else {
+        final unit = d.singleMetric.isNotEmpty ? d.singleMetric : 'KWH';
+        final mfVal = d.multiplicationFactor > 0 ? d.multiplicationFactor : 1.0;
+        final mfLabel = mfVal > 0 ? mfVal.toStringAsFixed(mfVal % 1 == 0 ? 0 : 2) : '1';
+        if (unit == 'MD') {
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MD Reading',
+            type: _ColumnType.mdReading,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MF',
+            type: _ColumnType.mf,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MD Recorded',
+            type: _ColumnType.mdRecorded,
+          ));
+        } else if (unit == 'PF') {
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'PF',
+            type: _ColumnType.pf,
+          ));
+        } else {
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Initial (01st)',
+            type: _ColumnType.reading,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Final (01st)',
+            type: _ColumnType.reading,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Diff',
+            type: _ColumnType.diff,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MF',
+            type: _ColumnType.mf,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Units',
+            type: _ColumnType.consumption,
+          ));
+        }
+      }
+    }
+
+    // Header 1: Device Names
+    final hRow1 = <CellValue?>[TextCellValue('Billing Month / Period')];
+    for (final col in colDefs) {
+      hRow1.add(TextCellValue(col.headerDevice));
+    }
+    sheet.appendRow(hRow1);
+
+    // Header 2: Metrics
+    final hRow2 = <CellValue?>[TextCellValue('')];
+    for (final col in colDefs) {
+      hRow2.add(TextCellValue(col.headerMetric));
+    }
+    sheet.appendRow(hRow2);
+
+    // 12 FY Month Rows
+    final List<Map<_ColumnDef, double?>> monthlyDiffs = [];
+    final List<Map<_ColumnDef, double?>> monthlyConsumps = [];
+    final List<Map<_ColumnDef, double?>> monthlyMdReadings = [];
+    final List<Map<_ColumnDef, double?>> monthlyPfReadings = [];
+
+    for (int i = 0; i < 12; i++) {
+      final calM = ((i + 3) % 12) + 1;
+      final calY = i < 9 ? fyStartYear : fyStartYear + 1;
+      final nextCalM = ((i + 4) % 12) + 1;
+      final nextCalY = (i + 1) < 9 ? fyStartYear : fyStartYear + 1;
+
+      final initDate = DateTime(calY, calM, 1);
+      final finalDate = DateTime(nextCalY, nextCalM, 1);
+      final mName = DateFormat('MMMM yyyy').format(initDate);
+      final initLabel = DateFormat('01-MMM').format(initDate);
+      final finalLabel = DateFormat('01-MMM').format(finalDate);
+      final monthTitle = '$mName ($initLabel to $finalLabel)';
+
+      final row = <CellValue?>[TextCellValue(monthTitle)];
+      final Map<_ColumnDef, double?> rowDiffMap = {};
+      final Map<_ColumnDef, double?> rowConsumpMap = {};
+      final Map<_ColumnDef, double?> rowMdMap = {};
+      final Map<_ColumnDef, double?> rowPfMap = {};
+
+      for (int cIdx = 0; cIdx < colDefs.length; cIdx++) {
+        final col = colDefs[cIdx];
+        final d = col.device;
+        final rInit = deviceMonthReadings[d.id]?['${calY}_${calM}'];
+        final rFinal = deviceMonthReadings[d.id]?['${nextCalY}_${nextCalM}'];
+
+        final initVals = rInit != null ? ReadingCalculationUtils.parseValues(rInit.reading.readingValues) : null;
+        final finalVals = rFinal != null ? ReadingCalculationUtils.parseValues(rFinal.reading.readingValues) : null;
+
+        final initVal = initVals?[col.unit] ?? initVals?[col.unit.toLowerCase()];
+        final finalVal = finalVals?[col.unit] ?? finalVals?[col.unit.toLowerCase()];
+
+        final factor = ReadingCalculationUtils.resolveEffectiveFactor(
+          readingDateMs: rFinal?.reading.readingDate ?? rInit?.reading.readingDate ?? AppDateUtils.toLocalMidnightUtcMs(finalDate),
+          unit: col.unit,
+          readingType: 'day',
+          currentDeviceMf: d.multiplicationFactor,
+          dayUnitFactorsJson: d.dayUnitFactors,
+          heatUnitFactorsJson: d.heatUnitFactors,
+          replacements: replacementsByDevice[d.id] ?? [],
+        );
+
+        double? diff;
+        if (finalVal != null && initVal != null) {
+          diff = ReadingCalculationUtils.calculateDifference(finalVal, initVal);
+        }
+        final consump = diff != null ? diff * factor : null;
+
+        if (col.type == _ColumnType.diff) {
+          rowDiffMap[col] = diff;
+        } else if (col.type == _ColumnType.consumption) {
+          rowConsumpMap[col] = consump;
+        } else if (col.type == _ColumnType.mdReading) {
+          rowMdMap[col] = finalVal ?? initVal;
+        } else if (col.type == _ColumnType.pf) {
+          rowPfMap[col] = finalVal ?? initVal;
+        }
+
+        switch (col.type) {
+          case _ColumnType.reading:
+            // Check if column is Initial or Final
+            if (col.headerMetric.contains('Initial')) {
+              row.add(_formatDoubleCell(initVal));
+            } else {
+              row.add(_formatDoubleCell(finalVal));
+            }
+            break;
+          case _ColumnType.diff:
+            row.add(_formatDoubleCell(diff));
+            break;
+          case _ColumnType.mf:
+            row.add(DoubleCellValue(factor));
+            break;
+          case _ColumnType.consumption:
+            row.add(_formatDoubleCell(consump));
+            break;
+          case _ColumnType.pf:
+            row.add(_formatDoubleCell(finalVal ?? initVal));
+            break;
+          case _ColumnType.mdReading:
+            row.add(_formatDoubleCell(finalVal ?? initVal));
+            break;
+          case _ColumnType.mdRecorded:
+            final md = finalVal ?? initVal;
+            row.add(_formatDoubleCell(md != null ? md * factor : null));
+            break;
+        }
+      }
+
+      monthlyDiffs.add(rowDiffMap);
+      monthlyConsumps.add(rowConsumpMap);
+      monthlyMdReadings.add(rowMdMap);
+      monthlyPfReadings.add(rowPfMap);
+      sheet.appendRow(row);
+    }
+
+    // Total Financial Year Row
+    final nextYearShort = (fyStartYear + 1).toString().substring(2);
+    final totalRow = <CellValue?>[TextCellValue('TOTAL FINANCIAL YEAR (FY $fyStartYear-$nextYearShort)')];
+
+    for (final col in colDefs) {
+      if (col.type == _ColumnType.diff) {
+        double sum = 0.0;
+        bool hasAny = false;
+        for (final m in monthlyDiffs) {
+          final v = m[col];
+          if (v != null) { sum += v; hasAny = true; }
+        }
+        totalRow.add(hasAny ? _formatDoubleCell(sum) : TextCellValue(''));
+      } else if (col.type == _ColumnType.consumption) {
+        double sum = 0.0;
+        bool hasAny = false;
+        for (final m in monthlyConsumps) {
+          final v = m[col];
+          if (v != null) { sum += v; hasAny = true; }
+        }
+        totalRow.add(hasAny ? _formatDoubleCell(sum) : TextCellValue(''));
+      } else if (col.type == _ColumnType.mdReading) {
+        double maxMd = 0.0;
+        bool hasAny = false;
+        for (final m in monthlyMdReadings) {
+          final v = m[col];
+          if (v != null) {
+            if (!hasAny || v > maxMd) { maxMd = v; }
+            hasAny = true;
+          }
+        }
+        totalRow.add(hasAny ? _formatDoubleCell(maxMd) : TextCellValue(''));
+      } else if (col.type == _ColumnType.mdRecorded) {
+        // Max MD Recorded
+        double maxMdRec = 0.0;
+        bool hasAny = false;
+        for (final m in monthlyMdReadings) {
+          final v = m[col];
+          if (v != null) {
+            final factor = col.device.multiplicationFactor > 0 ? col.device.multiplicationFactor : 1.0;
+            final rec = v * factor;
+            if (!hasAny || rec > maxMdRec) { maxMdRec = rec; }
+            hasAny = true;
+          }
+        }
+        totalRow.add(hasAny ? _formatDoubleCell(maxMdRec) : TextCellValue(''));
+      } else if (col.type == _ColumnType.pf) {
+        double sumPf = 0.0;
+        int countPf = 0;
+        for (final m in monthlyPfReadings) {
+          final v = m[col];
+          if (v != null) { sumPf += v; countPf++; }
+        }
+        totalRow.add(countPf > 0 ? _formatDoubleCell(sumPf / countPf) : TextCellValue(''));
+      } else if (col.type == _ColumnType.mf) {
+        final factor = col.device.multiplicationFactor > 0 ? col.device.multiplicationFactor : 1.0;
+        totalRow.add(DoubleCellValue(factor));
+      } else if (col.type == _ColumnType.reading) {
+        if (col.headerMetric.contains('Initial')) {
+          // April initial reading
+          final rInit = deviceMonthReadings[col.device.id]?['${fyStartYear}_4'];
+          final vals = rInit != null ? ReadingCalculationUtils.parseValues(rInit.reading.readingValues) : null;
+          final v = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
+          totalRow.add(_formatDoubleCell(v));
+        } else {
+          // March final reading
+          final rFinal = deviceMonthReadings[col.device.id]?['${fyStartYear + 1}_4'];
+          final vals = rFinal != null ? ReadingCalculationUtils.parseValues(rFinal.reading.readingValues) : null;
+          final v = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
+          totalRow.add(_formatDoubleCell(v));
+        }
+      } else {
+        totalRow.add(TextCellValue('-'));
+      }
+    }
+    sheet.appendRow(totalRow);
+
+    sheet.appendRow([TextCellValue('')]);
+    sheet.appendRow([TextCellValue('')]);
+    sheet.appendRow([TextCellValue('')]);
   }
 
   void _buildEnergyAbstractSheet({
@@ -949,6 +1655,28 @@ class ExportReadingsUseCase {
               headerMetric: 'PF',
               type: _ColumnType.pf,
             ));
+          } else if (u == 'MD') {
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MD Reading',
+              type: _ColumnType.mdReading,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MF',
+              type: _ColumnType.mf,
+            ));
+            colDefs.add(_ColumnDef(
+              device: d,
+              unit: u,
+              headerDevice: '${d.name} (MF: $mfStr)',
+              headerMetric: 'MD Recorded',
+              type: _ColumnType.mdRecorded,
+            ));
           } else {
             colDefs.add(_ColumnDef(
               device: d,
@@ -976,34 +1704,66 @@ class ExportReadingsUseCase {
       } else {
         final unit = d.singleMetric.isNotEmpty ? d.singleMetric : 'KWH';
         final mfLabel = d.multiplicationFactor > 0 ? d.multiplicationFactor.toStringAsFixed(0) : '1';
-        colDefs.add(_ColumnDef(
-          device: d,
-          unit: unit,
-          headerDevice: '${d.name} (MF: $mfLabel)',
-          headerMetric: 'Reading',
-          type: _ColumnType.reading,
-        ));
-        colDefs.add(_ColumnDef(
-          device: d,
-          unit: unit,
-          headerDevice: '${d.name} (MF: $mfLabel)',
-          headerMetric: 'Diff',
-          type: _ColumnType.diff,
-        ));
-        colDefs.add(_ColumnDef(
-          device: d,
-          unit: unit,
-          headerDevice: '${d.name} (MF: $mfLabel)',
-          headerMetric: 'MF',
-          type: _ColumnType.mf,
-        ));
-        colDefs.add(_ColumnDef(
-          device: d,
-          unit: unit,
-          headerDevice: '${d.name} (MF: $mfLabel)',
-          headerMetric: 'Units',
-          type: _ColumnType.consumption,
-        ));
+        if (unit == 'MD') {
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MD Reading',
+            type: _ColumnType.mdReading,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MF',
+            type: _ColumnType.mf,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MD Recorded',
+            type: _ColumnType.mdRecorded,
+          ));
+        } else if (unit == 'PF') {
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'PF',
+            type: _ColumnType.pf,
+          ));
+        } else {
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Reading',
+            type: _ColumnType.reading,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Diff',
+            type: _ColumnType.diff,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'MF',
+            type: _ColumnType.mf,
+          ));
+          colDefs.add(_ColumnDef(
+            device: d,
+            unit: unit,
+            headerDevice: '${d.name} (MF: $mfLabel)',
+            headerMetric: 'Units',
+            type: _ColumnType.consumption,
+          ));
+        }
       }
     }
 
@@ -1078,6 +1838,12 @@ class ExportReadingsUseCase {
           case _ColumnType.pf:
             row.add(_formatDoubleCell(curVal));
             break;
+          case _ColumnType.mdReading:
+            row.add(_formatDoubleCell(curVal));
+            break;
+          case _ColumnType.mdRecorded:
+            row.add(_formatDoubleCell(curVal != null ? curVal * factor : null));
+            break;
         }
       }
       sheet.appendRow(row);
@@ -1090,11 +1856,25 @@ class ExportReadingsUseCase {
     // 1. Initial Reading Row
     final initRow = <CellValue?>[TextCellValue('Initial Reading (01-$startDateStr)')];
     for (final col in colDefs) {
-      if (col.type == _ColumnType.reading) {
+      if (col.type == _ColumnType.reading || col.type == _ColumnType.mdReading) {
         final rwd = deviceDayReadings[col.device.id]?[cycleDates.first];
         final vals = rwd != null ? ReadingCalculationUtils.parseValues(rwd.reading.readingValues) : null;
         final val = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
         initRow.add(_formatDoubleCell(val));
+      } else if (col.type == _ColumnType.mdRecorded) {
+        final rwd = deviceDayReadings[col.device.id]?[cycleDates.first];
+        final vals = rwd != null ? ReadingCalculationUtils.parseValues(rwd.reading.readingValues) : null;
+        final val = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
+        final factor = rwd != null ? ReadingCalculationUtils.resolveEffectiveFactor(
+          readingDateMs: rwd.reading.readingDate,
+          unit: col.unit,
+          readingType: 'day',
+          currentDeviceMf: col.device.multiplicationFactor,
+          dayUnitFactorsJson: col.device.dayUnitFactors,
+          heatUnitFactorsJson: col.device.heatUnitFactors,
+          replacements: replacementsByDevice[col.device.id] ?? [],
+        ) : 1.0;
+        initRow.add(_formatDoubleCell(val != null ? val * factor : null));
       } else {
         initRow.add(TextCellValue('-'));
       }
@@ -1104,11 +1884,25 @@ class ExportReadingsUseCase {
     // 2. Final Reading Row
     final finalRow = <CellValue?>[TextCellValue('Final Reading (01-$endDateStr)')];
     for (final col in colDefs) {
-      if (col.type == _ColumnType.reading) {
+      if (col.type == _ColumnType.reading || col.type == _ColumnType.mdReading) {
         final rwd = deviceDayReadings[col.device.id]?[cycleDates.last];
         final vals = rwd != null ? ReadingCalculationUtils.parseValues(rwd.reading.readingValues) : null;
         final val = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
         finalRow.add(_formatDoubleCell(val));
+      } else if (col.type == _ColumnType.mdRecorded) {
+        final rwd = deviceDayReadings[col.device.id]?[cycleDates.last];
+        final vals = rwd != null ? ReadingCalculationUtils.parseValues(rwd.reading.readingValues) : null;
+        final val = vals?[col.unit] ?? vals?[col.unit.toLowerCase()];
+        final factor = rwd != null ? ReadingCalculationUtils.resolveEffectiveFactor(
+          readingDateMs: rwd.reading.readingDate,
+          unit: col.unit,
+          readingType: 'day',
+          currentDeviceMf: col.device.multiplicationFactor,
+          dayUnitFactorsJson: col.device.dayUnitFactors,
+          heatUnitFactorsJson: col.device.heatUnitFactors,
+          replacements: replacementsByDevice[col.device.id] ?? [],
+        ) : 1.0;
+        finalRow.add(_formatDoubleCell(val != null ? val * factor : null));
       } else {
         finalRow.add(TextCellValue('-'));
       }
@@ -1175,7 +1969,7 @@ class ExportReadingsUseCase {
   }
 }
 
-enum _ColumnType { reading, diff, mf, consumption, pf }
+enum _ColumnType { reading, diff, mf, consumption, pf, mdReading, mdRecorded }
 
 class _ColumnDef {
   final SupabaseDevice device;

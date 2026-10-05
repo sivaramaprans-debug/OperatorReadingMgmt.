@@ -22,6 +22,8 @@ class MonthlyReportDialog extends ConsumerStatefulWidget {
 }
 
 class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
+  bool _isFinancialYear = true;
+  late int _selectedFyStartYear;
   late int _selectedYear;
   late int _selectedMonth;
   bool _isExporting = false;
@@ -32,6 +34,12 @@ class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
     DateTime.now().year - 1,
     DateTime.now().year,
     DateTime.now().year + 1,
+  ];
+
+  final List<int> _fyStartYears = [
+    DateTime.now().year - 2,
+    DateTime.now().year - 1,
+    DateTime.now().year,
   ];
 
   final List<String> _monthNames = [
@@ -55,12 +63,21 @@ class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
     final now = DateTime.now();
     _selectedYear = now.year;
     _selectedMonth = now.month;
+    _selectedFyStartYear = now.month >= 4 ? now.year : now.year - 1;
+    if (!_fyStartYears.contains(_selectedFyStartYear)) {
+      _fyStartYears.add(_selectedFyStartYear);
+      _fyStartYears.sort();
+    }
   }
 
   DateTime get _startDate => DateTime(_selectedYear, _selectedMonth, 1);
   DateTime get _endDate => DateTime(_selectedYear, _selectedMonth + 1, 1);
 
   String get _cycleText {
+    if (_isFinancialYear) {
+      final nextYearShort = (_selectedFyStartYear + 1).toString().substring(2);
+      return 'FY $_selectedFyStartYear-$nextYearShort (01-Apr-$_selectedFyStartYear to 01-Apr-${_selectedFyStartYear + 1} - 12 Months)';
+    }
     final start = DateFormat('01-MMM-yyyy').format(_startDate);
     final end = DateFormat('01-MMM-yyyy').format(_endDate);
     final daysInMonth = DateTime(_selectedYear, _selectedMonth + 1, 0).day;
@@ -80,14 +97,22 @@ class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
       final readingsRepo = ref.read(supabaseReadingsRepoProvider);
       final replacementsRepo = ref.read(supabaseMeterReplacementRepoProvider);
 
-      final filePath = await usecase.generateAndExportMonthlyReport(
-        year: _selectedYear,
-        month: _selectedMonth,
-        devicesRepo: devicesRepo,
-        operatorsRepo: operatorsRepo,
-        readingsRepo: readingsRepo,
-        replacementsRepo: replacementsRepo,
-      );
+      final filePath = _isFinancialYear
+          ? await usecase.generateAndExportFinancialYearStatement(
+              fyStartYear: _selectedFyStartYear,
+              devicesRepo: devicesRepo,
+              operatorsRepo: operatorsRepo,
+              readingsRepo: readingsRepo,
+              replacementsRepo: replacementsRepo,
+            )
+          : await usecase.generateAndExportMonthlyReport(
+              year: _selectedYear,
+              month: _selectedMonth,
+              devicesRepo: devicesRepo,
+              operatorsRepo: operatorsRepo,
+              readingsRepo: readingsRepo,
+              replacementsRepo: replacementsRepo,
+            );
 
       if (!mounted) return;
 
@@ -95,7 +120,7 @@ class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Monthly report saved:\n$filePath'),
+            content: Text('${_isFinancialYear ? "Financial Year" : "Monthly"} report saved:\n$filePath'),
             duration: const Duration(seconds: 10),
             action: SnackBarAction(
               label: 'OPEN FILE',
@@ -145,7 +170,7 @@ class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
           const SizedBox(width: 12),
           const Expanded(
             child: Text(
-              'Export Monthly Report',
+              'Export Plant Report',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
@@ -157,60 +182,108 @@ class _MonthlyReportDialogState extends ConsumerState<MonthlyReportDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Generates a comprehensive 4-sheet plant report from the 1st of the month to the 1st of next month.',
+              'Generates a comprehensive 4-sheet plant report (Energy Abstract, SMS Divisions, SID Dedusting, Water Meters).',
               style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
+            // Report Type Selector
             Row(
               children: [
                 Expanded(
-                  flex: 3,
-                  child: DropdownButtonFormField<int>(
-                    value: _selectedMonth,
-                    decoration: const InputDecoration(
-                      labelText: 'Month',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                    items: List.generate(12, (index) {
-                      final m = index + 1;
-                      return DropdownMenuItem<int>(
-                        value: m,
-                        child: Text(_monthNames[index]),
-                      );
-                    }),
-                    onChanged: _isExporting
-                        ? null
-                        : (val) {
-                            if (val != null) setState(() => _selectedMonth = val);
-                          },
+                  child: ChoiceChip(
+                    label: const Center(child: Text('Financial Year (12 Mo)')),
+                    selected: _isFinancialYear,
+                    onSelected: _isExporting ? null : (selected) {
+                      if (selected) setState(() => _isFinancialYear = true);
+                    },
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Expanded(
-                  flex: 2,
-                  child: DropdownButtonFormField<int>(
-                    value: _selectedYear,
-                    decoration: const InputDecoration(
-                      labelText: 'Year',
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                    items: _years.map((y) {
-                      return DropdownMenuItem<int>(
-                        value: y,
-                        child: Text(y.toString()),
-                      );
-                    }).toList(),
-                    onChanged: _isExporting
-                        ? null
-                        : (val) {
-                            if (val != null) setState(() => _selectedYear = val);
-                          },
+                  child: ChoiceChip(
+                    label: const Center(child: Text('Single Month')),
+                    selected: !_isFinancialYear,
+                    onSelected: _isExporting ? null : (selected) {
+                      if (selected) setState(() => _isFinancialYear = false);
+                    },
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 14),
+            if (_isFinancialYear) ...[
+              DropdownButtonFormField<int>(
+                value: _selectedFyStartYear,
+                decoration: const InputDecoration(
+                  labelText: 'Financial Year',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                items: _fyStartYears.map((fy) {
+                  final nextShort = (fy + 1).toString().substring(2);
+                  return DropdownMenuItem<int>(
+                    value: fy,
+                    child: Text('FY $fy-$nextShort (01-Apr-$fy to 01-Apr-${fy + 1})'),
+                  );
+                }).toList(),
+                onChanged: _isExporting
+                    ? null
+                    : (val) {
+                        if (val != null) setState(() => _selectedFyStartYear = val);
+                      },
+              ),
+            ] else ...[
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: DropdownButtonFormField<int>(
+                      value: _selectedMonth,
+                      decoration: const InputDecoration(
+                        labelText: 'Month',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: List.generate(12, (index) {
+                        final m = index + 1;
+                        return DropdownMenuItem<int>(
+                          value: m,
+                          child: Text(_monthNames[index]),
+                        );
+                      }),
+                      onChanged: _isExporting
+                          ? null
+                          : (val) {
+                              if (val != null) setState(() => _selectedMonth = val);
+                            },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<int>(
+                      value: _selectedYear,
+                      decoration: const InputDecoration(
+                        labelText: 'Year',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: _years.map((y) {
+                        return DropdownMenuItem<int>(
+                          value: y,
+                          child: Text(y.toString()),
+                        );
+                      }).toList(),
+                      onChanged: _isExporting
+                          ? null
+                          : (val) {
+                              if (val != null) setState(() => _selectedYear = val);
+                            },
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.all(12),

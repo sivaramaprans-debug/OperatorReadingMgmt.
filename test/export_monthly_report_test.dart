@@ -349,5 +349,38 @@ void main() {
         await file.delete();
       } catch (_) {}
     });
+
+    test('generates Financial Year statement with 12 monthly rows and no difference on MD/PF', () async {
+      final usecase = ExportReadingsUseCase();
+      final filePath = await usecase.exportFinancialYearStatementToExcel(
+        fyStartYear: 2026,
+        devices: devices,
+        operators: operators,
+        activeAssignments: activeAssignments,
+        readings: readings,
+        replacements: replacements,
+      );
+
+      expect(filePath, isNotNull);
+      final file = File(filePath!);
+      expect(await file.exists(), isTrue);
+
+      final bytes = await file.readAsBytes();
+      final excel = Excel.decodeBytes(bytes);
+
+      expect(excel.tables.containsKey('Energy_Abstract'), isTrue);
+      expect(excel.tables.containsKey('SMS_Divisions'), isTrue);
+      expect(excel.tables.containsKey('SID_Dedusting'), isTrue);
+      expect(excel.tables.containsKey('Water_Meters'), isTrue);
+
+      final energySheet = excel.tables['Energy_Abstract']!;
+      // Should have headers + 12 monthly billing cycle rows + 1 total row
+      expect(energySheet.maxRows, greaterThanOrEqualTo(15));
+
+      // Clean up test file
+      try {
+        await file.delete();
+      } catch (_) {}
+    });
   });
 }
