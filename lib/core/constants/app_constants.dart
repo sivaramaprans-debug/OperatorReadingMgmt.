@@ -4,7 +4,7 @@
 abstract final class AppConstants {
   // App identity
   static const String appName = 'Operator Reading Mgmt';
-  static const String appVersion = '1.0.0';
+  static const String appVersion = '1.6.6';
 
   // Default admin credentials (seeded on first launch, hashed — never stored plain)
   static const String defaultAdminUsername = 'admin';
