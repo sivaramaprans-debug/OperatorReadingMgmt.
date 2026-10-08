@@ -33,7 +33,7 @@ class _AdminReadingsListScreenState
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_handleTabChange);
   }
 
@@ -156,6 +156,7 @@ class _AdminReadingsListScreenState
             Tab(text: 'Detail'),
             Tab(text: 'Admin Sheet'),
             Tab(text: 'Heat Summary'),
+            Tab(text: '132kv TOD'),
           ],
           indicatorColor: theme.colorScheme.primary,
           labelColor: theme.colorScheme.primary,
@@ -168,9 +169,10 @@ class _AdminReadingsListScreenState
           _DetailTab(),
           _SummaryTab(readingType: 'day'),
           _SummaryTab(readingType: 'heat'),
+          _132kvTodTab(),
         ],
       ),
-      floatingActionButton: _tabController.index == 0
+      floatingActionButton: (_tabController.index == 0 || _tabController.index == 3)
           ? FloatingActionButton.extended(
               onPressed: () => context.push(RoutePaths.adminReadingAdd),
               icon: const Icon(Icons.add_chart_rounded),
@@ -539,12 +541,17 @@ class _AdminDeviceReadingsSectionState
     final theme = Theme.of(context);
     final filter = ref.watch(adminReadingsFilterProvider);
 
+    final is132kv = widget.deviceName.toLowerCase().contains('132');
     // Apply local per-device type filter
-    final filtered = _selectedType == null
-        ? widget.readings
-        : widget.readings
-            .where((rwd) => rwd.reading.readingType == _selectedType)
-            .toList();
+    final filtered = is132kv
+        ? ((_selectedType ?? 'day') == 'tod'
+            ? widget.readings.where((rwd) => rwd.reading.readingType == 'tod').toList()
+            : widget.readings.where((rwd) => rwd.reading.readingType != 'tod').toList())
+        : (_selectedType == null
+            ? widget.readings
+            : widget.readings
+                .where((rwd) => rwd.reading.readingType == _selectedType)
+                .toList());
 
     final plainReadings = filtered.map((rwd) => rwd.reading).toList();
     final opNamesFiltered = {
@@ -596,7 +603,32 @@ class _AdminDeviceReadingsSectionState
                 ),
                 const SizedBox(width: 8),
                 // Per-device type filter (same as operator panel)
-                if (widget.showTypeColumn)
+                if (is132kv) ...[
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                        value: 'day',
+                        label: Text('Daily (8 AM)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: Icon(Icons.wb_sunny_outlined, size: 14),
+                      ),
+                      ButtonSegment(
+                        value: 'tod',
+                        label: Text('TOD Readings', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: Icon(Icons.schedule_rounded, size: 14),
+                      ),
+                    ],
+                    selected: {_selectedType ?? 'day'},
+                    onSelectionChanged: (newSelection) {
+                      setState(() {
+                        _selectedType = newSelection.first;
+                      });
+                    },
+                    style: SegmentedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      selectedBackgroundColor: (_selectedType ?? 'day') == 'tod' ? Colors.deepPurple.shade100 : theme.colorScheme.primaryContainer,
+                    ),
+                  ),
+                ] else if (widget.showTypeColumn) ...[
                   Container(
                     height: 32,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -631,6 +663,7 @@ class _AdminDeviceReadingsSectionState
                       ),
                     ),
                   ),
+                ],
                 // Clear Readings button
                 IconButton(
                   icon: const Icon(Icons.delete_sweep_rounded, size: 20, color: Colors.red),
@@ -658,6 +691,7 @@ class _AdminDeviceReadingsSectionState
                       ref.invalidate(adminReadingsProvider);
                       ref.invalidate(adminDaySummaryReadingsProvider);
                       ref.invalidate(adminHeatSummaryReadingsProvider);
+                      ref.invalidate(admin132kvTodReadingsProvider);
                     }
                   },
                 ),
@@ -679,7 +713,7 @@ class _AdminDeviceReadingsSectionState
             ReadingsCalculatedTable(
               readings: plainReadings,
               matrixUnits: widget.matrixUnits,
-              showTypeColumn: widget.showTypeColumn,
+              showTypeColumn: widget.showTypeColumn || (is132kv && ((_selectedType ?? 'day') == 'tod')),
               heatUnitFactors: widget.heatUnitFactors,
               dayUnitFactors: widget.dayUnitFactors,
               showOperatorColumn: true,
@@ -690,6 +724,123 @@ class _AdminDeviceReadingsSectionState
             ),
         ],
       ),
+    );
+  }
+}
+
+// ── Tab 4: 132kv TOD ─────────────────────────────────────────────────────────
+
+class _132kvTodTab extends ConsumerWidget {
+  const _132kvTodTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final readingsAsync = ref.watch(admin132kvTodReadingsProvider);
+    final filter = ref.watch(adminReadingsFilterProvider);
+
+    return Column(
+      children: [
+        const _FilterBar(readingType: 'tod'),
+        Expanded(
+          child: readingsAsync.when(
+            loading: () => const LoadingWidget(message: 'Loading 132kv TOD readings...'),
+            error: (err, stack) => ErrorStateWidget(
+              message: 'Failed to load readings',
+              onRetry: () => ref.invalidate(admin132kvTodReadingsProvider),
+            ),
+            data: (allReadings) {
+              final todReadings = allReadings
+                  .where((rwd) =>
+                      rwd.deviceName.toLowerCase().contains('132') &&
+                      rwd.reading.readingType == 'tod')
+                  .toList();
+
+              if (todReadings.isEmpty) {
+                return const EmptyStateWidget(
+                  icon: Icons.schedule_rounded,
+                  title: 'No 132kv TOD Readings',
+                  subtitle: 'No TOD slot readings recorded for 132kv yet.',
+                );
+              }
+
+              final firstReading = todReadings.first;
+              final dayMatrixUnits = firstReading.deviceDayMatrix.isEmpty
+                  ? <String>[]
+                  : firstReading.deviceDayMatrix
+                      .split(',')
+                      .map((e) => e.trim())
+                      .where((e) => e.isNotEmpty)
+                      .toList();
+              final allUnits = dayMatrixUnits.isNotEmpty
+                  ? dayMatrixUnits
+                  : ['KWH', 'KVAH', 'MD', 'Q1', 'Q2', 'PF'];
+
+              final dayFactors = parseFactorMap(firstReading.deviceDayUnitFactors);
+              final opNames = {
+                for (final rwd in todReadings) rwd.reading.id: rwd.operatorName
+              };
+              final plainReadings = todReadings.map((rwd) => rwd.reading).toList();
+
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 0,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.deepPurple.withOpacity(0.1),
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.schedule_rounded, size: 20, color: Colors.deepPurple),
+                              const SizedBox(width: 10),
+                              const Expanded(
+                                child: Text(
+                                  '132 KV — Time of Day (TOD) Readings',
+                                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.deepPurple.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '${todReadings.length} reading${todReadings.length == 1 ? '' : 's'}',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.deepPurple),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ReadingsCalculatedTable(
+                          readings: plainReadings,
+                          matrixUnits: allUnits,
+                          showTypeColumn: true,
+                          heatUnitFactors: dayFactors,
+                          dayUnitFactors: dayFactors,
+                          showOperatorColumn: true,
+                          operatorNames: opNames,
+                          showAdminActions: true,
+                          enableExcelCopyTools: true,
+                          filterOperatorId: filter.operatorId,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

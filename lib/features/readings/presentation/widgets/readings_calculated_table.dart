@@ -69,6 +69,71 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     }
   }
 
+  static String? getTodPeriod(SupabaseReading r) {
+    if (r.readingType != 'tod') return null;
+    final heat = r.heatNumber.toLowerCase();
+    final dt = DateTime.fromMillisecondsSinceEpoch(r.readingDate, isUtc: true).toLocal();
+    final h = dt.hour;
+    // 12 noon explicitly excluded from highlighting and difference calculation
+    if (heat.contains('12') || h == 12) {
+      return '12_noon';
+    }
+    // 6 AM to 10 AM (reading recorded at/around 10 AM, covering 6-10 interval)
+    if (heat.contains('6-10') || heat.contains('6 am to 10 am') || heat.contains('6:00 am - 10:00 am') || heat.contains('10:00') || (h >= 9 && h <= 11)) {
+      return '6_to_10_am';
+    }
+    // 10 AM to 6 PM (reading recorded at/around 6 PM, covering 10-6 interval)
+    if (heat.contains('10 am- 6 pm') || heat.contains('10:00 am - 6:00 pm') || heat.contains('10-6') || heat.contains('6:00 pm') || heat.contains('18:00') || (h >= 17 && h <= 19)) {
+      return '10_am_to_6_pm';
+    }
+    // 6 PM to 10 PM (reading recorded at/around 10 PM, covering 6-10 PM interval)
+    if (heat.contains('6-10 pm') || heat.contains('6 pm to 10 pm') || heat.contains('6:00 pm - 10:00 pm') || heat.contains('10:00 pm') || heat.contains('22:00') || (h >= 21 && h <= 23)) {
+      return '6_pm_to_10_pm';
+    }
+    // 10 PM to 6 AM (reading recorded at/around 6 AM next morning, covering 10 PM - 6 AM interval)
+    if (heat.contains('10 pm to 6 am') || heat.contains('10-6 am') || heat.contains('10:00 pm - 6:00 am') || heat.contains('6:00 am') || (h >= 5 && h <= 7)) {
+      return '10_pm_to_6_am';
+    }
+    return 'other_tod';
+  }
+
+  static ({Color bg, Color badgeBg, Color badgeText, String label})? getTodStyle(SupabaseReading r) {
+    final period = getTodPeriod(r);
+    switch (period) {
+      case '6_to_10_am':
+        return (
+          bg: const Color(0xFFFEF3C7), // Warm golden amber tint
+          badgeBg: const Color(0xFFD97706),
+          badgeText: Colors.white,
+          label: '6 AM – 10 AM',
+        );
+      case '10_am_to_6_pm':
+        return (
+          bg: const Color(0xFFE0F2FE), // Sky blue tint
+          badgeBg: const Color(0xFF0284C7),
+          badgeText: Colors.white,
+          label: '10 AM – 6 PM',
+        );
+      case '6_pm_to_10_pm':
+        return (
+          bg: const Color(0xFFF3E8FF), // Light purple tint
+          badgeBg: const Color(0xFF9333EA),
+          badgeText: Colors.white,
+          label: '6 PM – 10 PM',
+        );
+      case '10_pm_to_6_am':
+        return (
+          bg: const Color(0xFFF1F5F9), // Slate tint
+          badgeBg: const Color(0xFF475569),
+          badgeText: Colors.white,
+          label: '10 PM – 6 AM',
+        );
+      case '12_noon':
+      default:
+        return null;
+    }
+  }
+
   Map<String, Map<String, double?>> _buildDifferenceMap() {
     final dayReadings = widget.readings
         .where((r) => r.readingType == 'day' || r.readingType == 'standard')
@@ -79,12 +144,23 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
       ..sort((a, b) {
         final dateCmp = a.readingDate.compareTo(b.readingDate);
         if (dateCmp != 0) return dateCmp;
-        final createdCmp = a.createdAt.compareTo(b.createdAt);
-        if (createdCmp != 0) return createdCmp;
         final ha = int.tryParse(a.heatNumber) ?? 0;
         final hb = int.tryParse(b.heatNumber) ?? 0;
-        return ha.compareTo(hb);
+        final hCmp = ha.compareTo(hb);
+        if (hCmp != 0) return hCmp;
+        return a.createdAt.compareTo(b.createdAt);
       });
+
+    final todReadings = widget.readings.where((r) => r.readingType == 'tod').toList()
+      ..sort((a, b) {
+        final dateCmp = a.readingDate.compareTo(b.readingDate);
+        if (dateCmp != 0) return dateCmp;
+        return a.createdAt.compareTo(b.createdAt);
+      });
+
+    // 12 noon is explicitly excluded from calculation with 10 am and 6 pm
+    // The calculation chain is: 6-10 am, 10 am- 6 pm, 6pm to 10 pm, 10 pm to 6 am
+    final todCalcReadings = todReadings.where((r) => getTodPeriod(r) != '12_noon').toList();
 
     final result = <String, Map<String, double?>>{};
 
@@ -114,6 +190,15 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
 
     computeDiffs(dayReadings);
     computeDiffs(heatReadings);
+    computeDiffs(todCalcReadings);
+
+    // Any 12 noon readings get null differences
+    for (final r in todReadings) {
+      if (getTodPeriod(r) == '12_noon' && !result.containsKey(r.id)) {
+        result[r.id] = {for (final u in widget.matrixUnits) u: null};
+      }
+    }
+
     return result;
   }
 
@@ -365,7 +450,9 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
     headers.add('Posted Time');
     if (widget.showTypeColumn) {
       headers.add('Type');
-      headers.add('Heat #');
+      final hasTod = selectedRows.any((r) => r.readingType == 'tod');
+      final hasHeat = selectedRows.any((r) => r.readingType == 'heat');
+      headers.add(hasTod && !hasHeat ? 'Slot' : (hasHeat && !hasTod ? 'Heat #' : 'Heat / Slot'));
     }
     for (final u in widget.matrixUnits) {
       final isCum = _isCumulativeUnit(u);
@@ -749,15 +836,19 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                         _headerCell('Type', bold: true, bg: headerBg, width: _fixedW),
                         _dividerV(),
                         _headerCell(
-                          'Heat #',
+                          displayReadings.any((r) => r.readingType == 'tod') && !displayReadings.any((r) => r.readingType == 'heat')
+                              ? 'Slot'
+                              : (displayReadings.any((r) => r.readingType == 'heat') && !displayReadings.any((r) => r.readingType == 'tod')
+                                  ? 'Heat #'
+                                  : 'Heat / Slot'),
                           bold: true,
                           bg: headerBg,
                           width: _fixedW,
                           onTap: () => _copySingleColumn(
-                            'Heat #',
+                            'Heat # / Slot',
                             displayReadings.map((r) => r.heatNumber).toList(),
                           ),
-                          tooltip: 'Click to copy all Heat numbers for Excel',
+                          tooltip: 'Click to copy all Heat numbers / Slots for Excel',
                         ),
                       ],
                       ...widget.matrixUnits.expand((u) {
@@ -874,7 +965,10 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                           ? (kwhCons / kvahCons)
                           : null;
 
-                      final rowBg = isSelected ? theme.colorScheme.primaryContainer.withOpacity(0.3) : null;
+                      final todStyle = r.readingType == 'tod' ? getTodStyle(r) : null;
+                      final rowBg = isSelected
+                          ? theme.colorScheme.primaryContainer.withOpacity(0.3)
+                          : (todStyle?.bg);
 
                       return Column(
                         mainAxisSize: MainAxisSize.min,
@@ -948,13 +1042,31 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: isHeat ? AppColors.heatColorBg : AppColors.dayColorBg,
+                                    color: todStyle != null
+                                        ? todStyle.badgeBg
+                                        : (isHeat
+                                            ? AppColors.heatColorBg
+                                            : (r.readingType == 'tod'
+                                                ? Colors.deepPurple.shade50
+                                                : AppColors.dayColorBg)),
                                     borderRadius: BorderRadius.circular(5),
                                   ),
                                   child: Text(
-                                    r.readingType.toUpperCase(),
+                                    todStyle != null
+                                        ? 'TOD'
+                                        : (isHeat
+                                            ? 'HEAT'
+                                            : (r.readingType == 'tod'
+                                                ? 'TOD'
+                                                : 'DAY')),
                                     style: TextStyle(
-                                      color: isHeat ? AppColors.heatColor : AppColors.dayColor,
+                                      color: todStyle != null
+                                          ? todStyle.badgeText
+                                          : (isHeat
+                                              ? AppColors.heatColor
+                                              : (r.readingType == 'tod'
+                                                  ? Colors.deepPurple.shade700
+                                                  : AppColors.dayColor)),
                                       fontWeight: FontWeight.w700,
                                       fontSize: 10,
                                     ),
@@ -966,10 +1078,14 @@ class _ReadingsCalculatedTableState extends ConsumerState<ReadingsCalculatedTabl
                                 cellKey: 'heat_$rIdx',
                                 row: rIdx,
                                 col: 4,
-                                text: r.heatNumber.isEmpty ? '—' : r.heatNumber,
-                                label: 'Heat #',
+                                text: todStyle != null
+                                    ? (r.heatNumber.isNotEmpty ? r.heatNumber : todStyle.label)
+                                    : (r.heatNumber.isEmpty ? '—' : r.heatNumber),
+                                label: r.readingType == 'tod' ? 'Slot' : 'Heat #',
                                 width: _fixedW,
                                 bgColor: rowBg,
+                                textColor: todStyle != null ? Colors.black87 : null,
+                                isBold: todStyle != null,
                               ),
                             ],
                             ...widget.matrixUnits.asMap().entries.expand((uEntry) {

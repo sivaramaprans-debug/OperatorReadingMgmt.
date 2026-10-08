@@ -65,6 +65,19 @@ final adminHeatSummaryReadingsProvider =
   );
 });
 
+final admin132kvTodReadingsProvider =
+    FutureProvider.autoDispose<List<SupabaseReadingWithDetails>>((ref) async {
+  final filter = ref.watch(adminReadingsFilterProvider);
+  final repo = ref.watch(supabaseReadingsRepoProvider);
+
+  return repo.search(
+    readingType: 'tod',
+    fromDateMs: filter.fromDateMs,
+    toDateMs: filter.toDateMs,
+    limit: 500,
+  );
+});
+
 /// All operators for admin filter dropdown.
 final allOperatorsProvider =
     FutureProvider.autoDispose<List<SupabaseOperator>>((ref) {

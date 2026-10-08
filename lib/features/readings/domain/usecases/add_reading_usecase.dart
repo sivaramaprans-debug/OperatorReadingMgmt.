@@ -23,16 +23,17 @@ class AddReadingUseCase {
     if (values.isEmpty)
       return (null, const ValidationFailure('At least one reading value is required.'));
 
-    final validTypes = ['day', 'heat', 'standard'];
+    final validTypes = ['day', 'heat', 'standard', 'tod'];
     if (!validTypes.contains(readingType)) {
       return (null, const ValidationFailure('Invalid reading type.'));
     }
 
+    final isTod = readingType == 'tod';
     final normalizedHeat = (heatNumber.trim().toUpperCase() == 'R/F' || heatNumber.trim().toUpperCase() == 'RF')
         ? 'R/F'
         : heatNumber.trim();
     final finalHeatNumber =
-        (readingType == 'day' || readingType == 'standard') ? '' : normalizedHeat;
+        (readingType == 'day' || readingType == 'standard') ? '' : (isTod ? heatNumber.trim() : normalizedHeat);
     if (readingType == 'heat' && finalHeatNumber.isEmpty) {
       return (null, const ValidationFailure('Heat Number is required for Heat readings.'));
     }
@@ -50,7 +51,7 @@ class AddReadingUseCase {
       }
 
       // Validate units against device matrix
-      final deviceUnits = (readingType == 'day' || !device.requiresHeatDay)
+      final deviceUnits = (readingType == 'day' || readingType == 'tod' || !device.requiresHeatDay)
           ? (device.dayMatrix.isEmpty
               ? (device.matrix.isEmpty ? <String>[] : device.matrix.split(',').map((e) => e.trim()).toList())
               : device.dayMatrix.split(',').map((e) => e.trim()).toList())

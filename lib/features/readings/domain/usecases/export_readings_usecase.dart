@@ -305,28 +305,51 @@ class ExportReadingsUseCase {
         
         sheet.appendRow(headers);
 
-        final sortedForCalc = List<SupabaseReadingWithDetails>.from(deviceReadings);
-        sortedForCalc.sort((a, b) => a.reading.createdAt.compareTo(b.reading.createdAt));
-        
-        final diffMap = <String, Map<String, double?>>{};
-        for (int i = 0; i < sortedForCalc.length; i++) {
-          final cur = sortedForCalc[i];
-          final prev = i > 0 ? sortedForCalc[i - 1] : null;
-          final curVals = _parseValues(cur.reading.readingValues);
-          final prevVals = prev != null ? _parseValues(prev.reading.readingValues) : <String, double>{};
+        final daySorted = deviceReadings
+            .where((r) => r.reading.readingType == 'day' || r.reading.readingType == 'standard')
+            .toList()
+          ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
 
-          final map = <String, double?>{};
-          for (final u in allUnits) {
-            if (curVals.containsKey(u)) {
-              if (prevVals.containsKey(u)) {
-                map[u] = curVals[u]! - prevVals[u]!;
-              } else {
-                map[u] = null;
+        final heatSorted = deviceReadings
+            .where((r) => r.reading.readingType == 'heat')
+            .toList()
+          ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
+
+        final todSorted = deviceReadings
+            .where((r) {
+              if (r.reading.readingType != 'tod') return false;
+              final h = r.reading.heatNumber.toLowerCase();
+              final dt = DateTime.fromMillisecondsSinceEpoch(r.reading.readingDate, isUtc: true).toLocal();
+              return !h.contains('12') && dt.hour != 12;
+            })
+            .toList()
+          ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
+
+        final diffMap = <String, Map<String, double?>>{};
+        void calcGroupDiff(List<SupabaseReadingWithDetails> group) {
+          for (int i = 0; i < group.length; i++) {
+            final cur = group[i];
+            final prev = i > 0 ? group[i - 1] : null;
+            final curVals = _parseValues(cur.reading.readingValues);
+            final prevVals = prev != null ? _parseValues(prev.reading.readingValues) : <String, double>{};
+
+            final map = <String, double?>{};
+            for (final u in allUnits) {
+              if (curVals.containsKey(u)) {
+                if (prevVals.containsKey(u)) {
+                  map[u] = ReadingCalculationUtils.calculateDifference(curVals[u]!, prevVals[u]!);
+                } else {
+                  map[u] = null;
+                }
               }
             }
+            diffMap[cur.reading.id] = map;
           }
-          diffMap[cur.reading.id] = map;
         }
+
+        calcGroupDiff(daySorted);
+        calcGroupDiff(heatSorted);
+        calcGroupDiff(todSorted);
 
         for (final rwd in deviceReadings) {
           final r = rwd.reading;
@@ -397,28 +420,51 @@ class ExportReadingsUseCase {
         final dayUnits = first.deviceDayMatrix.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
         final allUnits = {...heatUnits, ...dayUnits}.toList();
 
-        final sortedForCalc = List<SupabaseReadingWithDetails>.from(deviceReadings);
-        sortedForCalc.sort((a, b) => a.reading.createdAt.compareTo(b.reading.createdAt));
-        
-        final diffMap = <String, Map<String, double?>>{};
-        for (int i = 0; i < sortedForCalc.length; i++) {
-          final cur = sortedForCalc[i];
-          final prev = i > 0 ? sortedForCalc[i - 1] : null;
-          final curVals = _parseValues(cur.reading.readingValues);
-          final prevVals = prev != null ? _parseValues(prev.reading.readingValues) : <String, double>{};
+        final daySorted = deviceReadings
+            .where((r) => r.reading.readingType == 'day' || r.reading.readingType == 'standard')
+            .toList()
+          ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
 
-          final map = <String, double?>{};
-          for (final u in allUnits) {
-            if (curVals.containsKey(u)) {
-              if (prevVals.containsKey(u)) {
-                map[u] = curVals[u]! - prevVals[u]!;
-              } else {
-                map[u] = null;
+        final heatSorted = deviceReadings
+            .where((r) => r.reading.readingType == 'heat')
+            .toList()
+          ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
+
+        final todSorted = deviceReadings
+            .where((r) {
+              if (r.reading.readingType != 'tod') return false;
+              final h = r.reading.heatNumber.toLowerCase();
+              final dt = DateTime.fromMillisecondsSinceEpoch(r.reading.readingDate, isUtc: true).toLocal();
+              return !h.contains('12') && dt.hour != 12;
+            })
+            .toList()
+          ..sort((a, b) => a.reading.readingDate.compareTo(b.reading.readingDate));
+
+        final diffMap = <String, Map<String, double?>>{};
+        void calcGroupDiff(List<SupabaseReadingWithDetails> group) {
+          for (int i = 0; i < group.length; i++) {
+            final cur = group[i];
+            final prev = i > 0 ? group[i - 1] : null;
+            final curVals = _parseValues(cur.reading.readingValues);
+            final prevVals = prev != null ? _parseValues(prev.reading.readingValues) : <String, double>{};
+
+            final map = <String, double?>{};
+            for (final u in allUnits) {
+              if (curVals.containsKey(u)) {
+                if (prevVals.containsKey(u)) {
+                  map[u] = ReadingCalculationUtils.calculateDifference(curVals[u]!, prevVals[u]!);
+                } else {
+                  map[u] = null;
+                }
               }
             }
+            diffMap[cur.reading.id] = map;
           }
-          diffMap[cur.reading.id] = map;
         }
+
+        calcGroupDiff(daySorted);
+        calcGroupDiff(heatSorted);
+        calcGroupDiff(todSorted);
 
         final headers = [
           'Date', 'Time', 'Op', 'Type', 'Heat',
@@ -716,11 +762,13 @@ class ExportReadingsUseCase {
 
       // Index 1st of month readings by device and 'year_month'
       final Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings = {};
+      final Map<String, Map<String, List<SupabaseReadingWithDetails>>> allDeviceMonthReadings = {};
       for (final rwd in readings) {
         if (rwd.reading.readingType != 'day') continue;
         final dt = DateTime.fromMillisecondsSinceEpoch(rwd.reading.readingDate, isUtc: true).toLocal();
+        final ymKey = '${dt.year}_${dt.month}';
+        allDeviceMonthReadings.putIfAbsent(rwd.reading.deviceId, () => {}).putIfAbsent(ymKey, () => []).add(rwd);
         if (dt.day == 1) {
-          final ymKey = '${dt.year}_${dt.month}';
           final existing = deviceMonthReadings[rwd.reading.deviceId]?[ymKey];
           if (existing == null || rwd.reading.createdAt > existing.reading.createdAt) {
             deviceMonthReadings.putIfAbsent(rwd.reading.deviceId, () => {})[ymKey] = rwd;
@@ -754,6 +802,7 @@ class ExportReadingsUseCase {
         fyStartYear: fyStartYear,
         devices: devices,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
 
@@ -765,6 +814,7 @@ class ExportReadingsUseCase {
         operators: operators,
         operatorDevicesMap: operatorDevicesMap,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
 
@@ -776,6 +826,7 @@ class ExportReadingsUseCase {
         operators: operators,
         operatorDevicesMap: operatorDevicesMap,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
 
@@ -787,6 +838,7 @@ class ExportReadingsUseCase {
         operators: operators,
         operatorDevicesMap: operatorDevicesMap,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
 
@@ -810,6 +862,7 @@ class ExportReadingsUseCase {
     required List<SupabaseDevice> devices,
     required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
     required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+    Map<String, Map<String, List<SupabaseReadingWithDetails>>> allDeviceMonthReadings = const {},
   }) {
     final sheet = excel['Energy_Abstract'];
     final energyDevices = devices
@@ -841,6 +894,7 @@ class ExportReadingsUseCase {
       fyStartYear: fyStartYear,
       devices: energyDevices,
       deviceMonthReadings: deviceMonthReadings,
+      allDeviceMonthReadings: allDeviceMonthReadings,
       replacementsByDevice: replacementsByDevice,
     );
   }
@@ -853,6 +907,7 @@ class ExportReadingsUseCase {
     required Map<String, List<SupabaseDevice>> operatorDevicesMap,
     required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
     required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+    Map<String, Map<String, List<SupabaseReadingWithDetails>>> allDeviceMonthReadings = const {},
   }) {
     final sheet = excel['SMS_Divisions'];
     final nextYearShort = (fyStartYear + 1).toString().substring(2);
@@ -898,6 +953,7 @@ class ExportReadingsUseCase {
           fyStartYear: fyStartYear,
           devices: sectionDevices,
           deviceMonthReadings: deviceMonthReadings,
+          allDeviceMonthReadings: allDeviceMonthReadings,
           replacementsByDevice: replacementsByDevice,
         );
       }
@@ -912,6 +968,7 @@ class ExportReadingsUseCase {
     required Map<String, List<SupabaseDevice>> operatorDevicesMap,
     required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
     required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+    Map<String, Map<String, List<SupabaseReadingWithDetails>>> allDeviceMonthReadings = const {},
   }) {
     final sheet = excel['SID_Dedusting'];
     final nextYearShort = (fyStartYear + 1).toString().substring(2);
@@ -948,6 +1005,7 @@ class ExportReadingsUseCase {
         fyStartYear: fyStartYear,
         devices: dedustDevices,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
     }
@@ -961,6 +1019,7 @@ class ExportReadingsUseCase {
     required Map<String, List<SupabaseDevice>> operatorDevicesMap,
     required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
     required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+    Map<String, Map<String, List<SupabaseReadingWithDetails>>> allDeviceMonthReadings = const {},
   }) {
     final sheet = excel['Water_Meters'];
     final nextYearShort = (fyStartYear + 1).toString().substring(2);
@@ -981,6 +1040,7 @@ class ExportReadingsUseCase {
         fyStartYear: fyStartYear,
         devices: sidWater,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
     }
@@ -993,6 +1053,7 @@ class ExportReadingsUseCase {
         fyStartYear: fyStartYear,
         devices: rmdWater,
         deviceMonthReadings: deviceMonthReadings,
+        allDeviceMonthReadings: allDeviceMonthReadings,
         replacementsByDevice: replacementsByDevice,
       );
     }
@@ -1006,6 +1067,7 @@ class ExportReadingsUseCase {
     required List<SupabaseDevice> devices,
     required Map<String, Map<String, SupabaseReadingWithDetails>> deviceMonthReadings,
     required Map<String, List<SupabaseMeterReplacement>> replacementsByDevice,
+    Map<String, Map<String, List<SupabaseReadingWithDetails>>> allDeviceMonthReadings = const {},
   }) {
     if (devices.isEmpty) return;
 
@@ -1238,7 +1300,17 @@ class ExportReadingsUseCase {
         } else if (col.type == _ColumnType.consumption) {
           rowConsumpMap[col] = consump;
         } else if (col.type == _ColumnType.mdReading) {
-          rowMdMap[col] = finalVal ?? initVal;
+          double? maxMd;
+          final mReadings = allDeviceMonthReadings[d.id]?['${calY}_${calM}'] ?? [];
+          for (final mr in mReadings) {
+            final mVals = ReadingCalculationUtils.parseValues(mr.reading.readingValues);
+            final v = mVals[col.unit] ?? mVals[col.unit.toLowerCase()];
+            if (v != null && (maxMd == null || v > maxMd)) {
+              maxMd = v;
+            }
+          }
+          final mdVal = maxMd ?? finalVal ?? initVal;
+          rowMdMap[col] = mdVal;
         } else if (col.type == _ColumnType.pf) {
           rowPfMap[col] = finalVal ?? initVal;
         }
@@ -1265,10 +1337,10 @@ class ExportReadingsUseCase {
             row.add(_formatDoubleCell(finalVal ?? initVal));
             break;
           case _ColumnType.mdReading:
-            row.add(_formatDoubleCell(finalVal ?? initVal));
+            row.add(_formatDoubleCell(rowMdMap[col]));
             break;
           case _ColumnType.mdRecorded:
-            final md = finalVal ?? initVal;
+            final md = rowMdMap[col] ?? finalVal ?? initVal;
             row.add(_formatDoubleCell(md != null ? md * factor : null));
             break;
         }

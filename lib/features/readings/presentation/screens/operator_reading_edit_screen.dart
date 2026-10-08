@@ -211,7 +211,7 @@ class _OperatorReadingEditScreenState extends ConsumerState<OperatorReadingEditS
     await notifier.editReading(
       readingId: widget.readingId,
       readingType: _readingType,
-      heatNumber: _readingType == 'heat' ? normalizedHeat : '',
+      heatNumber: (_readingType == 'heat' || _readingType == 'tod') ? normalizedHeat : '',
       values: values,
     );
 
@@ -321,8 +321,118 @@ class _OperatorReadingEditScreenState extends ConsumerState<OperatorReadingEditS
               ),
               const SizedBox(height: 24),
 
-              // Heat / Day type (only for devices that require it)
-              if (requiresHeatDay) ...[
+              // Heat / Day / TOD type
+              if (_device?.name.toLowerCase().contains('132') ?? false) ...[
+                Text('Reading Type (132 KV)', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: RadioListTile<String>(
+                        title: const Text('Daily (8 AM)'),
+                        value: 'day',
+                        groupValue: _readingType,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (val) {
+                          setState(() {
+                            _readingType = val!;
+                            _heatNumberController.clear();
+                          });
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: RadioListTile<String>(
+                        title: const Text('TOD (Time of Day)'),
+                        value: 'tod',
+                        groupValue: _readingType,
+                        contentPadding: EdgeInsets.zero,
+                        onChanged: (val) {
+                          setState(() {
+                            _readingType = val!;
+                            if (_heatNumberController.text.isEmpty) {
+                              _heatNumberController.text = '6:00 AM';
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (_readingType == 'tod') ...[
+                  Text('Select TOD Time Slot', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      (
+                        chipLabel: '10:00 AM (6 AM – 10 AM)',
+                        tag: '6 AM – 10 AM',
+                        hour: 10,
+                        minute: 0,
+                        color: const Color(0xFFD97706),
+                      ),
+                      (
+                        chipLabel: '6:00 PM (10 AM – 6 PM)',
+                        tag: '10 AM – 6 PM',
+                        hour: 18,
+                        minute: 0,
+                        color: const Color(0xFF0284C7),
+                      ),
+                      (
+                        chipLabel: '10:00 PM (6 PM – 10 PM)',
+                        tag: '6 PM – 10 PM',
+                        hour: 22,
+                        minute: 0,
+                        color: const Color(0xFF9333EA),
+                      ),
+                      (
+                        chipLabel: '6:00 AM (10 PM – 6 AM)',
+                        tag: '10 PM – 6 AM',
+                        hour: 6,
+                        minute: 0,
+                        color: const Color(0xFF475569),
+                      ),
+                    ].map((slot) {
+                      final label = slot.chipLabel;
+                      final tag = slot.tag;
+                      final hour = slot.hour;
+                      final minute = slot.minute;
+                      final isSelected = _heatNumberController.text.trim() == tag ||
+                          _heatNumberController.text.trim() == label ||
+                          _heatNumberController.text.trim().toLowerCase() == tag.toLowerCase();
+                      return ChoiceChip(
+                        label: Text(label),
+                        selected: isSelected,
+                        selectedColor: slot.color,
+                        labelStyle: TextStyle(
+                          color: isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() {
+                              _heatNumberController.text = tag;
+                            });
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _heatNumberController,
+                    decoration: const InputDecoration(
+                      labelText: 'TOD Slot / Label',
+                      hintText: 'e.g. 6 AM – 10 AM, 10 AM – 6 PM, 6 PM – 10 PM, 10 PM – 6 AM',
+                      prefixIcon: Icon(Icons.schedule_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ] else if (requiresHeatDay) ...[
                 Text('Reading Type', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 Row(

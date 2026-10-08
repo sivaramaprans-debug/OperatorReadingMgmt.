@@ -256,6 +256,41 @@ class SupabaseReadingsRepository {
       return SupabaseReading.fromMap(data);
     } 
 
+    if (readingType == 'tod') {
+      var query = supabase
+          .from(_table)
+          .select()
+          .eq('device_id', deviceId)
+          .eq('reading_type', 'tod')
+          .lt('reading_date', readingDateMs);
+      if (excludeReadingId != null && excludeReadingId.isNotEmpty) {
+        query = query.neq('id', excludeReadingId);
+      }
+      final data = await query
+          .order('reading_date', ascending: false)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (data != null) return SupabaseReading.fromMap(data);
+
+      // Fallback: previous reading of any type on this device (e.g. baseline day reading)
+      var fallbackQuery = supabase
+          .from(_table)
+          .select()
+          .eq('device_id', deviceId)
+          .lt('reading_date', readingDateMs);
+      if (excludeReadingId != null && excludeReadingId.isNotEmpty) {
+        fallbackQuery = fallbackQuery.neq('id', excludeReadingId);
+      }
+      final fallbackData = await fallbackQuery
+          .order('reading_date', ascending: false)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (fallbackData != null) return SupabaseReading.fromMap(fallbackData);
+      return null;
+    }
+
     // For heat readings:
     var query = supabase
         .from(_table)

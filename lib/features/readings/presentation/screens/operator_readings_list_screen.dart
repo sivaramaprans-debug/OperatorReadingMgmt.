@@ -166,7 +166,32 @@ class _DeviceReadingsSectionState extends ConsumerState<_DeviceReadingsSection> 
                     style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
-                if (widget.device.requiresHeatDay) ...[
+                if (widget.device.name.toLowerCase().contains('132')) ...[
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                        value: 'day',
+                        label: Text('Daily (8 AM)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: Icon(Icons.wb_sunny_outlined, size: 14),
+                      ),
+                      ButtonSegment(
+                        value: 'tod',
+                        label: Text('TOD Readings', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        icon: Icon(Icons.schedule_rounded, size: 14),
+                      ),
+                    ],
+                    selected: {_selectedType ?? 'day'},
+                    onSelectionChanged: (newSelection) {
+                      setState(() {
+                        _selectedType = newSelection.first;
+                      });
+                    },
+                    style: SegmentedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      selectedBackgroundColor: (_selectedType ?? 'day') == 'tod' ? Colors.deepPurple.shade100 : theme.colorScheme.primaryContainer,
+                    ),
+                  ),
+                ] else if (widget.device.requiresHeatDay) ...[
                   Container(
                     height: 32,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -221,8 +246,16 @@ class _DeviceReadingsSectionState extends ConsumerState<_DeviceReadingsSection> 
             ),
             data: (readings) {
               // Apply filter
+              final is132kv = widget.device.name.toLowerCase().contains('132');
               var filtered = readings;
-              if (_selectedType != null) {
+              if (is132kv) {
+                final mode = _selectedType ?? 'day';
+                if (mode == 'tod') {
+                  filtered = readings.where((r) => r.readingType == 'tod').toList();
+                } else {
+                  filtered = readings.where((r) => r.readingType != 'tod').toList();
+                }
+              } else if (_selectedType != null) {
                 filtered = readings.where((r) => r.readingType == _selectedType).toList();
               }
 
@@ -230,7 +263,9 @@ class _DeviceReadingsSectionState extends ConsumerState<_DeviceReadingsSection> 
                 return Padding(
                   padding: const EdgeInsets.all(16),
                   child: Text(
-                    'No readings found.',
+                    is132kv && (_selectedType == 'tod')
+                        ? 'No TOD readings found. Add readings using TOD reading type.'
+                        : 'No readings found.',
                     style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 );
@@ -238,11 +273,12 @@ class _DeviceReadingsSectionState extends ConsumerState<_DeviceReadingsSection> 
 
               final heatFactors = parseFactorMap(widget.device.heatUnitFactors);
               final dayFactors = parseFactorMap(widget.device.dayUnitFactors);
+              final showType = widget.device.requiresHeatDay || (is132kv && (_selectedType == 'tod'));
 
               return ReadingsCalculatedTable(
                 readings: filtered,
                 matrixUnits: allUnits,
-                showTypeColumn: widget.device.requiresHeatDay,
+                showTypeColumn: showType,
                 heatUnitFactors: heatFactors,
                 dayUnitFactors: dayFactors,
               );
